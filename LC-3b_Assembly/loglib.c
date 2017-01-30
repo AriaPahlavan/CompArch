@@ -8,8 +8,22 @@
 #include <stdarg.h>
 #include "loglib.h"
 
+
 #define EMPTY_VAL 0
 #define LOG_LEVEL DEBUG
+
+
+void printLogLabel(enum LOG_LEVELS lvl);
+
+void outputDouble(double value);
+
+void output(void *V, enum DATA_TYPE Type);
+
+void printList(int num, va_list valist);
+
+void printLog(int num, va_list valist);
+
+void colorPrint(enum LOG_LEVELS lvl, const char *txt);
 
 void printList(int num, va_list valist){
     int i;
@@ -168,7 +182,9 @@ void output(void *V, enum DATA_TYPE Type) {
 }
 
 void loggingMsg(enum LOG_LEVELS lvl, char *msg) {
-    printf("[%s]: %s\n", enumStrings[lvl], msg);
+    printLogLabel(lvl);
+    printf("%s", msg);
+    colorPrint(lvl, "\n---------------------------\n");
 }
 
 void logging(enum LOG_LEVELS lvl, int num, ...) {
@@ -178,13 +194,36 @@ void logging(enum LOG_LEVELS lvl, int num, ...) {
     va_start(valist, num);
 
     if (lvl >= LOG_LEVEL) {
-        printf("[%s]: ", enumStrings[lvl]);
+        printLogLabel(lvl);
         if (lvl == INFO || lvl == WARN) printf(" ");
         printLog(num, valist);
-        println(1, ENDL);
+        colorPrint(lvl, "\n---------------------------\n");
     }
 
     /* clean memory reserved for valist */
     va_end(valist);
 
+}
+
+void printLogLabel(enum LOG_LEVELS lvl) {
+    printf("[");
+    colorPrint(lvl, enumStrings[lvl]);
+    printf("]: ");
+}
+
+void colorPrint(enum LOG_LEVELS lvl, const char *txt) {
+    switch (lvl) {
+        case DEBUG:
+            printf(AGRN "%s%s", txt, ANRM);
+            break;
+        case INFO:
+            printf(ABLU "%s%s", txt, ANRM);
+            break;
+        case WARN:
+            printf(AYEL "%s%s", txt, ANRM);
+            break;
+        case ERROR:
+            printf(ARED "%s%s", txt, ANRM);
+            break;
+    }
 }

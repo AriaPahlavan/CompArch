@@ -7,6 +7,14 @@
 
 #include <stdbool.h>
 
+#define ANRM  "\x1B[0m"
+#define ARED  "\x1B[31m"
+#define AGRN  "\x1B[32m"
+#define AYEL  "\x1B[33m"
+#define ABLU  "\x1B[34m"
+#define AMAG  "\x1B[35m"
+#define ACYN  "\x1B[36m"
+#define AWHT  "\x1B[37m"
 
 enum DATA_TYPE{
     PTR,
@@ -58,21 +66,32 @@ enum LOG_LEVELS{
 
 const static char * enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
 
+
 void loggingMsg(enum LOG_LEVELS lvl, char * msg);
 
+/**
+ * Example:
+ *       logging(DEBUG,
+ *               1,
+ *               S, "Some message"
+ *       );
+ * @param lvl
+ *          logging level of this file
+ * @param num
+ *          number of message arguments
+ * @param ...
+ *          message arguments
+ *          (S, ""
+ *              or
+ *          I, 1
+ *              or
+ *          C, 'a')
+ */
 void logging(enum LOG_LEVELS lvl, int num, ...);
-
-void printList(int num, va_list valist);
-
-void printLog(int num, va_list valist);
 
 void print(int num, ...);
 
 void println(int num, ...);
-
-void outputDouble(double value);
-
-void output(void *V, enum DATA_TYPE Type);
 
 
 #endif /*LC_3B_ASSEMBLY_PRINTTOOLS_H*/

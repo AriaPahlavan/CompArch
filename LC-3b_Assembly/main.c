@@ -10,12 +10,10 @@
 #define MY_LOG_LEVEL DEBUG
 
 
+
 int main() {
-    /*logging(MY_LOG_LEVEL, "hello");*/
-    limits();
     return 0;
 }
-
 
 void limits() {
 
