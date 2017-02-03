@@ -1,9 +1,16 @@
 ; this is a comment
 
+;LBL	LEA R0, A
+
 	.ORIG x3000
-A	AND R0, R0, #0
+
+NLBL	ADD, R7, R1, #30
+
 	LEA R0, A
-	HALT
+G2GS	HALT
+VALUE	.FILL x0004
+ADDR	.FILL x3000
 	.END
 ;
+XLBL	LEA R0, A
 ;
