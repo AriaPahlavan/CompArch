@@ -130,6 +130,7 @@ TableEntry symbolTable[MAX_SYMBOLS];
 static FILE *outfile;
 static int symbolTableLength = 0;
 uint16_t locationCntr = -1;
+int actualPc = -1;
 static int logNum = 0;
 const static int trapVectorVal[] = {0x20, 0x21, 0x22, 0x23, 0x25};
 const static char *trapVectorTable[] = {"x20", "x21", "x22", "x23", "x25"};
@@ -262,9 +263,7 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum);
 
 int16_t validateRegister(const char *reg, bool isHard);
 
-
 void errorValidateRegister(const char *reg);
-
 
 void processPseudoOpe(Instruction *i);
 
@@ -299,6 +298,10 @@ void errorTrapVector(const char *arg);
 void errorSpecOutOfBound(Instruction *i);
 
 void errorNegTrapVector(const char *arg);
+
+void errorUnalignedAddr(uint16_t val);
+
+void errorPcoffsetoutOfBound(int16_t pcoffset);
 
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
@@ -377,6 +380,7 @@ void errorUnauthorizedInstruction(Instruction *i) {
 uint16_t initLocationCntr(const Instruction *i) {
     validateAddrStr(i->arg1);
     locationCntr = toNum(i->arg1);
+    if(locationCntr%2 != 0) errorUnalignedAddr(locationCntr);
     logging(debug, 2, S, "Initialized LC to ", I, locationCntr);
     return locationCntr;
 }
@@ -387,12 +391,11 @@ uint16_t getLocationCntr() {
 }
 
 uint16_t getProgramCntr() {
-    if (locationCntr < 0 || locationCntr > USHRT_MAX) errorPCoutOfBound();
+    if (locationCntr < 0 || locationCntr >= USHRT_MAX - 1) errorPCoutOfBound();
     return pc(locationCntr);
 }
 
 void errorPCoutOfBound() {
-    /*TODO what happens if pc is out of bound?*/
     logging(error, 2, S, "Program counter is out of bound: ", I, pc(locationCntr));
     exit(4);
 }
@@ -464,10 +467,11 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "ADD result is: ", I, output);
             } else { /*immediate value arg*/
-                int arg = (toNum(i->arg3) & imm5mask);
+                int arg = (toNum(i->arg3));
 
                 if (arg < -16 || arg > 15) errorSpecOutOfBound(i);
 
+                arg = arg & imm5mask;
                 output += (arg + 0x0020);
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "ADD result is: ", I, output);
@@ -505,7 +509,8 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
         case lea:
             if (true) {
                 const char *label;
-                uint16_t pcoff9, addr;
+                int16_t pcoff9;
+                uint16_t addr;
 
 
                 if (i->enumOpcode == lea) label = i->arg2;
@@ -513,6 +518,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
 
                 addr = getLabelAddr(label);
                 pcoff9 = (((int) (addr - getProgramCntr()) >> 1) & pcoff9mask);
+                if (pcoff9 > 255 || pcoff9 < -256) errorPcoffsetoutOfBound(pcoff9);
                 output += pcoff9;
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "BR or LEA result is: ", I, output);
@@ -525,10 +531,11 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
             break;
         case jsr:
             if (true) {
-                uint16_t pcoff11;
-                int16_t addr = getLabelAddr(i->arg1);
+                int16_t pcoff11;
+                uint16_t addr = getLabelAddr(i->arg1);
 
-                pcoff11 = (((int) (addr - getProgramCntr()) >> 1) & pcoff9mask);
+                pcoff11 = (((int) (addr - getProgramCntr()) >> 1) & pcoff11mask);
+                if (pcoff11 > 1023 || pcoff11 < -1024) errorPcoffsetoutOfBound(pcoff11);
                 output += (pcoff11 + 0x0800);
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "JSR result is: ", I, output);
@@ -558,9 +565,14 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
     }
 }
 
+void errorPcoffsetoutOfBound(int16_t pcoffset) {
+    logging(error, 2, S, "PCoffset is out of bound: ", I16, pcoffset);
+    exit(4);
+}
+
 void errorSpecOutOfBound(Instruction *i) {
     logging(error, 2, S, "Found out of boound areguement in: ", INSTRUCTION, i);
-    exit(4);
+    exit(3);
 }
 
 int validateTrapArg(const char *arg) {
@@ -607,7 +619,7 @@ uint16_t getLabelAddr(const char *label) {
 
 void errorLabelNotFound(const char *label) {
     logging(error, 3, S, "Could not find label: '", S, label, S, "'");
-    exit(4);
+    exit(1);
 }
 
 void validateArgNum(Instruction *i) {
@@ -768,12 +780,23 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
             break;
         case fill:
         case orig:
-            if (argNum == 1) result = outputFill(i->arg1);
+            if (argNum == 1) {
+                uint16_t val = toNum(i->arg1);
+
+                if(val%2 != 0 && opcode == orig) errorUnalignedAddr(val);
+
+                result = outputFill(i->arg1);
+            }
             logging(debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
         case end:
             break;
     }
     return result;
+}
+
+void errorUnalignedAddr(uint16_t val) {
+    logging(error, 2, S, "Unaligned address found: ", I, val);
+    exit(3);
 }
 
 int16_t validateRegister(const char *reg, bool isHard) {
@@ -823,7 +846,7 @@ enum OPCODES getOpcodeEnum(Instruction *inst) {
 
 void errorGetOpcodeEnum(const char *opcode) {
     logging(error, 3, S, "Invalid opcode: '", S, opcode, S, "'");
-    exit(4);
+    exit(2);
 }
 
 enum OPCODES isPsuedoup(const char *opcode) {
@@ -838,8 +861,9 @@ enum OPCODES isPsuedoup(const char *opcode) {
 }
 
 int incrementLocationCntr() {
-    if (locationCntr == (uint16_t) -1) {
-        logging(error, 1, S, "Unauthorized memory access");
+    if (locationCntr >= USHRT_MAX -1) {
+        actualPc = locationCntr + 1;
+        logging(error, 2, S, "Unauthorized memory access after location: ", I, actualPc);
         exit(4);
     } else {
         locationCntr = pc(locationCntr);
