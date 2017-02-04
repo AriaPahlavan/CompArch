@@ -303,6 +303,10 @@ void errorUnalignedAddr(uint16_t val);
 
 void errorPcoffsetoutOfBound(int16_t pcoffset);
 
+void checkPSoffset9(int16_t offset);
+
+void checkPCoffset11(int16_t offset);
+
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
     loggingMsg(debug, "Initializing...");
@@ -518,7 +522,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
 
                 addr = getLabelAddr(label);
                 pcoff9 = (((int) (addr - getProgramCntr()) >> 1) & pcoff9mask);
-                if (pcoff9 > 255 || pcoff9 < -256) errorPcoffsetoutOfBound(pcoff9);
+                checkPSoffset9(pcoff9);
                 output += pcoff9;
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "BR or LEA result is: ", I, output);
@@ -535,7 +539,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 uint16_t addr = getLabelAddr(i->arg1);
 
                 pcoff11 = (((int) (addr - getProgramCntr()) >> 1) & pcoff11mask);
-                if (pcoff11 > 1023 || pcoff11 < -1024) errorPcoffsetoutOfBound(pcoff11);
+                checkPCoffset11(pcoff11);
                 output += (pcoff11 + 0x0800);
                 writeIntToFile(outfile, output);
                 logging(debug, 2, S, "JSR result is: ", I, output);
@@ -562,6 +566,31 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
             writeIntToFile(outfile, output);
             logging(debug, 2, S, "TRAP result is: ", I, output);
             break;
+    }
+}
+
+void checkPCoffset11(int16_t offset) {
+    int16_t mask = 0x0400;
+
+    if((offset & mask) != 0) {/*negative*/
+        offset &= 0x03FF;
+        if (offset > 1024) errorPcoffsetoutOfBound(offset);
+    }
+    else{
+        offset &= 0x03FF;
+        if (offset > 1023) errorPcoffsetoutOfBound(offset);
+    }
+}
+
+void checkPSoffset9(int16_t offset) {
+    int16_t mask = 0x0100;
+    if((offset & mask) != 0) {/*negative*/
+        offset &= 0x00FF;
+        if (offset > 256) errorPcoffsetoutOfBound(offset);
+    }
+    else{
+        offset &= 0x00FF;
+        if (offset > 255) errorPcoffsetoutOfBound(offset);
     }
 }
 
