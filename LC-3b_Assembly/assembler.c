@@ -9,11 +9,13 @@
 
 
 /**----------------------------------- Definitions ------------------------------------*/
-#define MAX_NUM_OPCODES 28
+#define MAX_NUM_OPCODES 31
 #define MAX_LINE_LENGTH 255
 #define MAX_LABEL_LEN 20
 #define MAX_SYMBOLS 255
 #define MAX_REGISTERS 8
+#define MAX_OFFSET6 31
+#define MIN_OFFSET6 -32
 #define FILL 28
 #define ORIG 29
 #define END 30
@@ -29,6 +31,9 @@
 #define error __FUNCTION__, __LINE__, ERROR
 #define nibble 4
 #define adjOpcode(val) val << 3*nibble
+#define adjArgOne(val) val << 2*nibble+1
+#define adjArgTwo(val) val << nibble+2
+
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -47,6 +52,7 @@ enum ASM_PHASE {
     FIRST_PASS, SEC_PASS
 };
 enum DATA_TYPE {
+    INSTRUCTION,
     PTR,
     CHAR,
     INT_8,
@@ -92,9 +98,12 @@ enum LOG_LEVELS {
     ERROR,
     NONE
 };
-enum OPCODE {
+enum OPCODES {
     add, and, br, brn, brp, brnp, brz, brnz, brzp, brnzp, jmp, ret, jsr, jsrr, ldb,
     ldw, lea, not, rti, lshf, rshfl, rshfa, stb, stw, trap, xor, halt, nop, fill, orig, end
+};
+enum REGISTERS {
+    r0, r1, r2, r3, r4, r5, r6, r7
 };
 
 typedef struct {
@@ -109,7 +118,8 @@ typedef struct INSTRUCTION {
     char *arg3;
     char *arg4;
 
-    enum OPCODE enumOpcode;
+    enum OPCODES enumOpcode;
+    int16_t decodResult;
 
     bool hasLabel;
     bool isPseudoOpe;
@@ -119,8 +129,10 @@ typedef struct INSTRUCTION {
 TableEntry symbolTable[MAX_SYMBOLS];
 static FILE *outfile;
 static int symbolTableLength = 0;
-static int LC;
+uint16_t locationCntr = -1;
 static int logNum = 0;
+const static int trapVectorVal[] = {0x20, 0x21, 0x22, 0x23, 0x25};
+const static char *trapVectorTable[] = {"x20", "x21", "x22", "x23", "x25"};
 const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
 const static char *pseudoOps[] = {".orig", ".end", ".fill"};
 const static char *invalidLabels[] = {"in", "out", "getc", "puts"};
@@ -135,13 +147,13 @@ const static char *lowerOpcodes[] = {"add", "and", "br", "brn", "brp", "brnp", "
                               0000011, 0000111, 1100000, 1100000111000000, 01001, 0100000, 0010,
                               0110, 1110, 1001, 1000000000000000, 1101, 1101, 1101,
                               0011, 0111, 11110000, 1001, 1111000000100101, 0000000000000000};*/
-const static int opcodes[] = {0001, 0101, 0000111, 0000100, 0000001, 0000101, 0000010, 0000110,
-                                0000011, 0000111, 1100000, 1100000111000000, 01001, 0100000, 0010,
-                                0110, 1110, 1001, 1000000000000000, 1101, 1101, 1101,
-                                0011, 0111, 11110000, 1001, 1111000000100101, 0000000000000000};
+const static int opcodes[] = {1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 4, 4, 2,
+                              6, 14, 9, 8, 13, 13, 13, 3, 7, 15, 9, 0xF025, 0, 0, 0, 0};
 
-const enum OPCODE opcodeEnum[] = {add, and, br, brn, brp, brnp, brz, brnz, brzp, brnzp, jmp, ret, jsr,
-                                  jsrr, ldb, ldw, lea, not, rti, lshf, rshfl, rshfa, stb, stw, trap, xor, halt, nop};
+const enum OPCODES opcodeEnum[] = {add, and, br, brn, brp, brnp, brz, brnz, brzp, brnzp,
+                                   jmp, ret, jsr, jsrr, ldb, ldw, lea, not, rti, lshf,
+                                   rshfl, rshfa, stb, stw, trap, xor, halt, nop,
+                                   fill, orig, end};
 
 
 /**-------------------------------- Function Declarations -----------------------------*/
@@ -155,9 +167,9 @@ void testLimits();
 
 void loggingMsg(const char *func, int line, enum LOG_LEVELS lvl, const char *msg);
 
-enum OPCODE isPsuedoup(const char *opcode);
+enum OPCODES isPsuedoup(const char *opcode);
 
-enum OPCODE getOpcodeEnum(Instruction *inst);
+enum OPCODES getOpcodeEnum(Instruction *inst);
 
 void logging(const char *func, int line, enum LOG_LEVELS lvl, int num, ...);
 
@@ -214,6 +226,8 @@ void errorCopyLabel(char *labelCpy, char *label);
 
 void testSymbolTabel();
 
+int toNum(char *pStr);
+
 void validateLabel(char *label);
 
 void errorValidateLabel(char *label);
@@ -224,38 +238,71 @@ int isTrapLabel(const char *label);
 
 void toString(const Instruction *i);
 
-void tryAddLabel(const Instruction *i, int lc);
+void tryAddLabel(const Instruction *i);
 
-int incrementLocationCntr(int cntr);
+int incrementLocationCntr();
 
 void decodeInstruction(Instruction *i);
 
 void printAll();
 
-int initLocationCntr(const Instruction *i, int locationCntr);
+uint16_t initLocationCntr(const Instruction *i);
 
 void validateAddrStr(char *addr);
 
 void errorValidateAddr(int addr);
 
+void validateFillVal(char *val);
 
 void errorGetOpcodeEnum(const char *opcode);
 
 void errorUnauthorizedInstruction(Instruction *i);
 
-int16_t validateArg(char *arg, enum OPCODE opcode, int argNum);
+int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum);
 
-int16_t validateRegister(const char *reg);
+int16_t validateRegister(const char *reg, bool isHard);
 
 
 void errorValidateRegister(const char *reg);
 
 
+void processPseudoOpe(Instruction *i);
+
+int16_t outputFill(const char *arg);
+
+void writeIntToFile(FILE *file, uint16_t val);
+
+void validateArgNum(Instruction *i);
+
+bool isEmptyArg(const char *arg);
+
+void errorValidArgNum(Instruction *i, int numExtraArgs);
+
+void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output);
+
+void errorLCoutOfBound();
+
+void errorPCoutOfBound();
+
+uint16_t getLabelAddr(const char *label);
+
+void errorLabelNotFound(const char *label);
+
+void errorOffset6OutOfBound(int16_t arg);
+
+void errorAmnt4outOfBound(Instruction *i);
+
+int validateTrapArg(const char *arg);
+
+void errorTrapVector(const char *arg);
+
+void errorSpecOutOfBound(Instruction *i);
+
+void errorNegTrapVector(const char *arg);
+
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
     loggingMsg(debug, "Initializing...");
-
-    logging(info, 4, S, "left shift ", I, opcodes[1], S, " (5) by 3 nibbles=", I, adjOpcode(opcodes[1]));
 
     /* open input/output files*/
     FILE *infile = openFile(argv[1], "r");
@@ -264,6 +311,7 @@ int main(int argc, char *argv[]) {
     Instruction i;
 
     parseFile(infile, &i, FIRST_PASS);
+    testSymbolTabel();
     rewind(infile);
     parseFile(infile, &i, SEC_PASS);
 
@@ -277,35 +325,38 @@ void testSymbolTabel() {
     int i;
 
     for (i = 0; i < getTableSize(); ++i) {
-        logging(debug, 4, S, "Found symbol: '", S, symbolTable[i].label, S, "' at index ", I, i);
+        logging(debug, 6, S, "'", S, symbolTable[i].label, S, "' at index ", I, i, S, " with address: ", I,
+                symbolTable[i].address);
     }
 }
 
 int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
-    /*TODO check what happens if theres code before .ORIG or after .END*/
-    bool isPassedOrig = false;
+    bool isPassedOrig = false, isPassedEnd = false;
 
     char lLine[MAX_LINE_LENGTH + 1];
-    int lRet, instructionCounter = 0, locationCntr = 0;
+    int lRet, instructionCounter = 0;
+    uint16_t lc = 0;
 
     do {
+        if (isPassedEnd) break;
+
         lRet = readAndParse(infile, lLine, &i->label, &i->opcode,
                             &i->arg1, &i->arg2, &i->arg3, &i->arg4);
 
         if (lRet != DONE && lRet != EMPTY_LINE) {/* instruction */
             instructionCounter++;
-            toString(i);
+            logging(debug, 1, INSTRUCTION, i);
 
-            if (passNum == FIRST_PASS) tryAddLabel(i, locationCntr);
-            if (strcmp(i->opcode, ".end") == 0) break;
+            if (passNum == FIRST_PASS) tryAddLabel(i);
+            if (strcmp(i->opcode, ".end") == 0) isPassedEnd = true;
             if (passNum == SEC_PASS && isPassedOrig) decodeInstruction(i);
 
-            locationCntr = incrementLocationCntr(locationCntr);
+            if (isPassedOrig) lc = incrementLocationCntr(); /* increment PC and LC */
 
             if (strcmp(i->opcode, ".orig") == 0) {
                 isPassedOrig = true;
                 if (passNum == SEC_PASS) decodeInstruction(i);
-                locationCntr = initLocationCntr(i, locationCntr);
+                lc = initLocationCntr(i);
 
             } else if (!isPassedOrig) errorUnauthorizedInstruction(i);
 
@@ -323,11 +374,32 @@ void errorUnauthorizedInstruction(Instruction *i) {
     exit(4);
 }
 
-int initLocationCntr(const Instruction *i, int locationCntr) {
+uint16_t initLocationCntr(const Instruction *i) {
     validateAddrStr(i->arg1);
     locationCntr = toNum(i->arg1);
     logging(debug, 2, S, "Initialized LC to ", I, locationCntr);
     return locationCntr;
+}
+
+uint16_t getLocationCntr() {
+    if (locationCntr < 0 || locationCntr > USHRT_MAX) errorLCoutOfBound();
+    return locationCntr;
+}
+
+uint16_t getProgramCntr() {
+    if (locationCntr < 0 || locationCntr > USHRT_MAX) errorPCoutOfBound();
+    return pc(locationCntr);
+}
+
+void errorPCoutOfBound() {
+    /*TODO what happens if pc is out of bound?*/
+    logging(error, 2, S, "Program counter is out of bound: ", I, pc(locationCntr));
+    exit(4);
+}
+
+void errorLCoutOfBound() {
+    logging(error, 2, S, "Location counter is out of bound: ", I, locationCntr);
+    exit(4);
 }
 
 void validateAddrStr(char *addr) {
@@ -337,41 +409,297 @@ void validateAddrStr(char *addr) {
         errorValidateAddr(address);
 }
 
+void validateFillVal(char *val) {
+    int result = toNum(val);
+
+    if (result < 0 || result > USHRT_MAX)
+        errorValidateAddr(result);
+}
+
 void errorValidateAddr(int addr) {
     logging(error, 2, S, "Found an invalid address=", I, addr);
     exit(4);
 }
 
 void decodeInstruction(Instruction *i) {
-    /*TODO get opcode enum */
-    enum OPCODE opcode = getOpcodeEnum(i);
+    uint16_t output = 0, mask1 = 0x0E00;
 
-    /*TODO grab opcode value (lshf to right posiiton) and put it in a templatie*/
-    int16_t arg1 = validateArg(i->arg1, opcode, 1);
+    enum OPCODES opcode = getOpcodeEnum(i);
+
+    output = adjOpcode(opcodes[opcode]);
+    logging(debug, 2, I, output, INSTRUCTION, i);
+
+    validateArgNum(i);
+
+    uint16_t arg1 = processArg(i, opcode, 1);
+    uint16_t o = output + arg1;
+    logging(debug, 6, I, arg1, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i);
+    output = o;
 
 
-    /*TODO have a fucntion that based on arg type does validation and interpretation*/
+    uint16_t arg2 = processArg(i, opcode, 2);
+    o = output + arg2;
+    logging(debug, 6, I, arg2, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i);
+    output = o;
 
-
-    /*TODO add results to the template */
-
-
-    /*TODO converte template to string of hex represation of the template */
-
-
-    /*TODO output instruction in the outfile */
-
+    outputDecodeResults(i, opcode, output);
 }
 
-int16_t validateArg(char *arg, enum OPCODE opcode, int argNum) {
-    int16_t  result = 0;
-    
+void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
+    uint8_t reg;
+    int16_t imm5mask = 0x001F;
+    int16_t pcoff9mask = 0x01FF;
+    int16_t pcoff11mask = 0x07FF;
+    int16_t offset6mask = 0x003F;
+    int16_t amount4mask = 0x000F;
+
+
+    switch (opcode) {
+        case add:
+        case and:
+        case xor:
+            reg = validateRegister(i->arg3, false);
+            if (validateRegister(i->arg3, false) != -1) { /*register arg*/
+                output += reg;
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "ADD result is: ", I, output);
+            } else { /*immediate value arg*/
+                int arg = (toNum(i->arg3) & imm5mask);
+
+                if (arg < -16 || arg > 15) errorSpecOutOfBound(i);
+
+                output += (arg + 0x0020);
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "ADD result is: ", I, output);
+            }
+
+            break;
+        case ldb:
+        case ldw:
+        case stb:
+        case stw:
+            if (true) {
+                int16_t arg = toNum(i->arg3);
+                if (arg > MAX_OFFSET6 || arg < MIN_OFFSET6) errorOffset6OutOfBound(arg);
+                output += arg & offset6mask;
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "LDB result is: ", I, output);
+            }
+            break;
+        case not:
+            if (true) {
+                int16_t rest = 0x003F;
+                output += rest;
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "NOT result is: ", I, output);
+            }
+            break;
+        case brn:
+        case brp:
+        case brnp:
+        case brz:
+        case brnz:
+        case brzp:
+        case br:
+        case brnzp:
+        case lea:
+            if (true) {
+                const char *label;
+                uint16_t pcoff9, addr;
+
+
+                if (i->enumOpcode == lea) label = i->arg2;
+                else label = i->arg1;
+
+                addr = getLabelAddr(label);
+                pcoff9 = (((int) (addr - getProgramCntr()) >> 1) & pcoff9mask);
+                output += pcoff9;
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "BR or LEA result is: ", I, output);
+            }
+            break;
+        case jmp:
+        case jsrr:
+            writeIntToFile(outfile, output);
+            logging(debug, 2, S, "JMP or JSRR result is: ", I, output);
+            break;
+        case jsr:
+            if (true) {
+                uint16_t pcoff11;
+                int16_t addr = getLabelAddr(i->arg1);
+
+                pcoff11 = (((int) (addr - getProgramCntr()) >> 1) & pcoff9mask);
+                output += (pcoff11 + 0x0800);
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "JSR result is: ", I, output);
+            }
+            break;
+        case lshf:
+        case rshfa:
+        case rshfl:
+            if (true) {
+                int16_t val = toNum(i->arg3);
+                if (val < 0 || val > 15) errorAmnt4outOfBound(i);
+
+                output += (val & amount4mask);
+
+                if (opcode == rshfl) output += 0x0010;
+                if (opcode == rshfa) output += 0x0030;
+
+                writeIntToFile(outfile, output);
+                logging(debug, 2, S, "SHFT result is: ", I, output);
+            }
+            break;
+        case trap:
+            output += trapVectorVal[validateTrapArg(i->arg1)];
+            writeIntToFile(outfile, output);
+            logging(debug, 2, S, "TRAP result is: ", I, output);
+            break;
+    }
+}
+
+void errorSpecOutOfBound(Instruction *i) {
+    logging(error, 2, S, "Found out of boound areguement in: ", INSTRUCTION, i);
+    exit(4);
+}
+
+int validateTrapArg(const char *arg) {
+    int i;
+
+    if (toNum(arg) < 0) errorNegTrapVector(arg);
+
+    for (i = 0; i < 5; ++i)
+        if (strcmp(arg, trapVectorTable[i]) == 0) return i;
+
+    errorTrapVector(arg);
+}
+
+void errorNegTrapVector(const char *arg) {
+    logging(error, 2, S, "Negative trap vector: ", S, arg);
+    exit(3);
+}
+
+void errorTrapVector(const char *arg) {
+    logging(error, 2, S, "Invalid trap vector: ", S, arg);
+    exit(4);
+}
+
+void errorAmnt4outOfBound(Instruction *i) {
+    logging(error, 2, S, "Amount 4 outof bound for: ", INSTRUCTION, i);
+    exit(3);
+}
+
+void errorOffset6OutOfBound(int16_t arg) {
+    logging(error, 2, S, "Could not find label: ", I16, arg);
+    exit(4);
+}
+
+uint16_t getLabelAddr(const char *label) {
+    logging(debug, 2, S, "Getting label: ", S, label);
+    int i;
+
+    for (i = 0; i < getTableSize(); ++i)
+        if (strcmp(label, symbolTable[i].label) == 0)
+            return symbolTable[i].address;
+
+    errorLabelNotFound(label);
+}
+
+void errorLabelNotFound(const char *label) {
+    logging(error, 3, S, "Could not find label: '", S, label, S, "'");
+    exit(4);
+}
+
+void validateArgNum(Instruction *i) {
+    switch (i->enumOpcode) {
+        /*3 args*/
+        case add:
+        case and:
+        case ldb:
+        case ldw:
+        case lshf:
+        case rshfl:
+        case rshfa:
+        case stb:
+        case stw:
+        case xor:
+            if (!isEmptyArg(i->arg4)) errorValidArgNum(i, 1);
+            break;
+
+            /*2 args*/
+        case not:
+        case lea:
+            if (!isEmptyArg(i->arg3)) errorValidArgNum(i, 1);
+            if (!isEmptyArg(i->arg4)) errorValidArgNum(i, 2);
+            break;
+
+            /*1 arg*/
+        case brn:
+        case brp:
+        case brnp:
+        case brz:
+        case brnz:
+        case brzp:
+        case br:
+        case brnzp:
+        case jmp:
+        case jsrr:
+        case jsr:
+        case trap:
+        case fill:
+        case orig:
+            if (!isEmptyArg(i->arg2)) errorValidArgNum(i, 1);
+            if (!isEmptyArg(i->arg3)) errorValidArgNum(i, 2);
+            if (!isEmptyArg(i->arg4)) errorValidArgNum(i, 3);
+            break;
+
+            /*0 args*/
+        case ret:
+        case rti:
+        case halt:
+        case nop:
+        case end:
+            if (!isEmptyArg(i->arg1)) errorValidArgNum(i, 1);
+            if (!isEmptyArg(i->arg2)) errorValidArgNum(i, 2);
+            if (!isEmptyArg(i->arg3)) errorValidArgNum(i, 3);
+            if (!isEmptyArg(i->arg4)) errorValidArgNum(i, 4);
+            break;
+    }
+}
+
+void errorValidArgNum(Instruction *i, int numExtraArgs) {
+    logging(error, 4, S, "Found at least ", I, numExtraArgs, S, " extra args in: ", INSTRUCTION, i);
+    exit(4);
+}
+
+bool isEmptyArg(const char *arg) {
+    if (strcmp(arg, "") != 0)
+        return false;
+    else
+        return true;
+}
+
+int16_t outputFill(const char *arg) {
+    validateFillVal(arg);
+    writeIntToFile(outfile, toNum(arg));
+
+    return 0;
+}
+
+int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
+    /*logging();*/
+    uint16_t result = 0;
+    uint8_t reg = 0;
+    const char *arg;
+
+    if (argNum == 1) arg = i->arg1;
+    else arg = i->arg2;
+
     switch (opcode) {
         case add:
         case and:
         case ldb:
         case ldw:
-        case lea:
         case not:
         case lshf:
         case rshfl:
@@ -379,53 +707,99 @@ int16_t validateArg(char *arg, enum OPCODE opcode, int argNum) {
         case stb:
         case stw:
         case xor:
-            result = validateRegister(arg);
+            result = reg = validateRegister(arg, true);
+            if (argNum == 1) result = adjArgOne(result);
+            else result = adjArgTwo(result);
+            logging(debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #", I, argNum);
             break;
-        case br: 
         case brn:
+            if (argNum == 1) result = adjArgOne(4);
+            break;
         case brp:
+            if (argNum == 1) result = adjArgOne(1);
+            break;
         case brnp:
-        case brz: 
+            if (argNum == 1) result = adjArgOne(5);
+            break;
+        case brz:
+            if (argNum == 1) result = adjArgOne(2);
+            break;
         case brnz:
+            if (argNum == 1) result = adjArgOne(6);
+            break;
         case brzp:
+            if (argNum == 1) result = adjArgOne(3);
+            break;
+        case br:
         case brnzp:
-        case jmp: 
-        case ret: 
-        case jsr:
-        case jsrr:
+            if (argNum == 1) result = adjArgOne(7);
+            break;
         case rti:
-        case trap: 
-        case halt: 
-        case nop: 
-        case fill: 
-        case orig: 
+            if (argNum == 1) writeToFile(outfile, "0x8000\n");
+            break;
+        case ret:
+            if (argNum == 1) writeToFile(outfile, "0xC1C0\n");
+            break;
+        case jmp:
+        case jsrr:
+            if (argNum == 1) result = adjArgOne(000);
+            if (argNum == 2) {
+                result = reg = validateRegister(i->arg1, true);
+                result = adjArgTwo(result);
+                logging(debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #", I, argNum);
+            }
+            break;
+        case jsr:
+            break;
+        case lea:
+            if (argNum == 1) {
+                result = reg = validateRegister(arg, true);
+                result = adjArgOne(result);
+            }
+            break;
+        case trap:
+            if (argNum == 1) result = adjArgOne(000);
+            break;
+        case halt:
+            if (argNum == 1) writeIntToFile(outfile, opcodes[halt]);
+            break;
+        case nop:
+            if (argNum == 1) writeIntToFile(outfile, adjOpcode(opcodes[nop]));
+            break;
+        case fill:
+        case orig:
+            if (argNum == 1) result = outputFill(i->arg1);
+            logging(debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
         case end:
             break;
     }
+    return result;
+}
+
+int16_t validateRegister(const char *reg, bool isHard) {
+    int i, result = -1;
+
+    for (i = 0; i < MAX_REGISTERS; ++i)
+        if (strcmp(reg, registers[i]) == 0) {
+            result = i;
+            break;
+        }
+
+    if (result == -1 && isHard) errorValidateRegister(reg);
 
     return result;
 }
 
-int16_t validateRegister(const char *reg) {
-    int i, result = -1;
-
-    for (i = 0; i < MAX_REGISTERS; ++i)
-        if (strcmp(reg, registers[i]) == 0)
-            result = i;
-
-    if (result == -1) errorValidateRegister(reg);
-}
-
 void errorValidateRegister(const char *reg) {
-    logging(error, 3, S, "Found an invalid register: '", S, reg, S, "'" );
+    logging(error, 3, S, "Found an invalid register: '", S, reg, S, "'");
     exit(4);
 }
 
-enum OPCODE getOpcodeEnum(Instruction *inst) {
+enum OPCODES getOpcodeEnum(Instruction *inst) {
     int j;
     const char *opcode = inst->opcode;
 
-    enum OPCODE result = isPsuedoup(opcode);
+    enum OPCODES result = isPsuedoup(opcode);
 
     if (result != -1) inst->isPseudoOpe = true;
     else inst->isPseudoOpe = false;
@@ -452,7 +826,7 @@ void errorGetOpcodeEnum(const char *opcode) {
     exit(4);
 }
 
-enum OPCODE isPsuedoup(const char *opcode) {
+enum OPCODES isPsuedoup(const char *opcode) {
     if (strcmp(opcode, lowerOpcodes[ORIG]) == 0)
         return orig;
     else if (strcmp(opcode, lowerOpcodes[FILL]) == 0)
@@ -463,19 +837,21 @@ enum OPCODE isPsuedoup(const char *opcode) {
         return -1;
 }
 
-int incrementLocationCntr(int cntr) {
-    if (cntr == 0)
-        return 0;
-
-    else
-        return pc(cntr);
+int incrementLocationCntr() {
+    if (locationCntr == (uint16_t) -1) {
+        logging(error, 1, S, "Unauthorized memory access");
+        exit(4);
+    } else {
+        locationCntr = pc(locationCntr);
+        return locationCntr;
+    }
 }
 
-void tryAddLabel(const Instruction *i, int lc) {
+void tryAddLabel(const Instruction *i) {
     if (i->label != NULL && strlen(i->label) != 0) {
         logging(debug, 3, S, "cur label: '", S, i->label, S, "'");
         validateLabel(i->label);
-        addLebel(i->label, lc);
+        addLebel(i->label, getLocationCntr());
     }
 }
 
@@ -583,6 +959,25 @@ void writeToFile(FILE *file, const char *text) {
 
     logging(debug, 2,
             S, "Success: wrote to file: ", S, text
+    );
+}
+
+void writeIntToFile(FILE *file, uint16_t val) {
+    loggingMsg(debug, "Writing to file...");
+    int mask = 0x0000F000, i;
+
+    writeToFile(outfile, "0x");
+
+    for (i = 0; i < 4; ++i) {
+        /* mask nibbles of value, right shift to first nibble position, output */
+        fprintf(file, "%X", (mask & val) >> (3 - i) * nibble);
+        mask >>= nibble;
+    }
+
+    writeToFile(outfile, "\n");
+
+    logging(debug, 2,
+            S, "Success: wrote to file: ", I, val
     );
 }
 
@@ -934,8 +1329,19 @@ void outputDouble(double value) {
 }
 
 void output(void *V, enum DATA_TYPE Type) {
+    Instruction *i = (Instruction *) V;
 
     switch (Type) {
+        case INSTRUCTION:
+            printf("\n" AWHT "");
+            if (i->label != NULL && strcmp("", i->label) != 0) printf("%s   ", i->label);
+            printf("%s", i->opcode);
+            if (i->arg1 != NULL && strcmp("", i->arg1) != 0) printf(", %s", i->arg1);
+            if (i->arg2 != NULL && strcmp("", i->arg2) != 0) printf(", %s", i->arg2);
+            if (i->arg3 != NULL && strcmp("", i->arg3) != 0) printf(", %s", i->arg3);
+            if (i->arg4 != NULL && strcmp("", i->arg4) != 0) printf(", %s", i->arg4);
+            printf(ANRM "");
+            break;
         case P:
         case PTR:
             printf("%p", (int *) V);
