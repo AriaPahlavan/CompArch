@@ -1,3 +1,7 @@
+/*
+	Name 1: Aria Pahlavan
+	UTEID 1: AP443
+*/
 #include <stdio.h>      /* standard input/output library */
 #include <stdlib.h>     /* Standard C Library */
 #include <string.h>     /* String operations library */
@@ -209,7 +213,7 @@ int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum);
 int readAndParse(FILE *pInfile, char *pLine, char **pLabel, char **pOpcode,
                  char **pArg1, char **pArg2, char **pArg3, char **pArg4);
 
-void addLebel(char *label, int lc);
+void addLabel(char *label, int lc);
 
 int getTableSize();
 
@@ -307,9 +311,17 @@ void checkPSoffset9(int16_t offset);
 
 void checkPCoffset11(int16_t offset);
 
+void errorValidateFillVal(int result);
+
+uint16_t outputOrig(const char *arg);
+
+void errorOrigNotFound();
+
+void errorEndNotReached();
+
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
-    loggingMsg(debug, "Initializing...");
+    loggingMsg(info, "Initializing...");
 
     /* open input/output files*/
     FILE *infile = openFile(argv[1], "r");
@@ -318,13 +330,13 @@ int main(int argc, char *argv[]) {
     Instruction i;
 
     parseFile(infile, &i, FIRST_PASS);
-    testSymbolTabel();
     rewind(infile);
     parseFile(infile, &i, SEC_PASS);
 
     /* close input/output files*/
     closeFiles(infile);
     closeFiles(outfile);
+    loggingMsg(info, "Assembly completed successfully!");
     exit(0);
 }
 
@@ -345,7 +357,6 @@ int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
     uint16_t lc = 0;
 
     do {
-        if (isPassedEnd) break;
 
         lRet = readAndParse(infile, lLine, &i->label, &i->opcode,
                             &i->arg1, &i->arg2, &i->arg3, &i->arg4);
@@ -358,22 +369,35 @@ int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
             if (strcmp(i->opcode, ".end") == 0) isPassedEnd = true;
             if (passNum == SEC_PASS && isPassedOrig) decodeInstruction(i);
 
+            if (isPassedEnd) break;
             if (isPassedOrig) lc = incrementLocationCntr(); /* increment PC and LC */
 
             if (strcmp(i->opcode, ".orig") == 0) {
                 isPassedOrig = true;
                 if (passNum == SEC_PASS) decodeInstruction(i);
                 lc = initLocationCntr(i);
-
             } else if (!isPassedOrig) errorUnauthorizedInstruction(i);
 
         }
 
     } while (lRet != DONE);
 
+    if (isPassedOrig && !isPassedEnd) errorEndNotReached();
+    if (!isPassedOrig && isPassedEnd) errorOrigNotFound();
+
     logging(debug, 2, S, "Number of instruction in the file=", I, instructionCounter);
 
     return instructionCounter;
+}
+
+void errorEndNotReached() {
+    loggingMsg(error, ".END not reached.");
+    exit(4);
+}
+
+void errorOrigNotFound() {
+    loggingMsg(error, "Did not find .ORIG");
+    exit(4);
 }
 
 void errorUnauthorizedInstruction(Instruction *i) {
@@ -384,7 +408,7 @@ void errorUnauthorizedInstruction(Instruction *i) {
 uint16_t initLocationCntr(const Instruction *i) {
     validateAddrStr(i->arg1);
     locationCntr = toNum(i->arg1);
-    if(locationCntr%2 != 0) errorUnalignedAddr(locationCntr);
+    if (locationCntr % 2 != 0) errorUnalignedAddr(locationCntr);
     logging(debug, 2, S, "Initialized LC to ", I, locationCntr);
     return locationCntr;
 }
@@ -419,12 +443,17 @@ void validateAddrStr(char *addr) {
 void validateFillVal(char *val) {
     int result = toNum(val);
 
-    if (result < 0 || result > USHRT_MAX)
-        errorValidateAddr(result);
+    if (result < SHRT_MIN || result > SHRT_MAX)
+        errorValidateFillVal(result);
+}
+
+void errorValidateFillVal(int result) {
+    logging(error, 2, S, "Found invalid .Fill value: ", I, result);
+    exit(4);
 }
 
 void errorValidateAddr(int addr) {
-    logging(error, 2, S, "Found an invalid address=", I, addr);
+    logging(error, 2, S, "Found an invalid address: ", I, addr);
     exit(4);
 }
 
@@ -572,11 +601,10 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
 void checkPCoffset11(int16_t offset) {
     int16_t mask = 0x0400;
 
-    if((offset & mask) != 0) {/*negative*/
+    if ((offset & mask) != 0) {/*negative*/
         offset &= 0x03FF;
         if (offset > 1024) errorPcoffsetoutOfBound(offset);
-    }
-    else{
+    } else {
         offset &= 0x03FF;
         if (offset > 1023) errorPcoffsetoutOfBound(offset);
     }
@@ -584,11 +612,10 @@ void checkPCoffset11(int16_t offset) {
 
 void checkPSoffset9(int16_t offset) {
     int16_t mask = 0x0100;
-    if((offset & mask) != 0) {/*negative*/
+    if ((offset & mask) != 0) {/*negative*/
         offset &= 0x00FF;
         if (offset > 256) errorPcoffsetoutOfBound(offset);
-    }
-    else{
+    } else {
         offset &= 0x00FF;
         if (offset > 255) errorPcoffsetoutOfBound(offset);
     }
@@ -727,6 +754,13 @@ int16_t outputFill(const char *arg) {
     return 0;
 }
 
+uint16_t outputOrig(const char *arg) {
+    validateAddrStr(arg);
+    writeIntToFile(outfile, toNum(arg));
+
+    return 0;
+}
+
 int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
     /*logging();*/
     uint16_t result = 0;
@@ -812,9 +846,11 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
             if (argNum == 1) {
                 uint16_t val = toNum(i->arg1);
 
-                if(val%2 != 0 && opcode == orig) errorUnalignedAddr(val);
+                if (val % 2 != 0 && opcode == orig) errorUnalignedAddr(val);
 
-                result = outputFill(i->arg1);
+                if (opcode == fill) result = outputFill(i->arg1);
+                if (opcode == orig) result = outputOrig(i->arg1);
+
             }
             logging(debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
         case end:
@@ -890,7 +926,7 @@ enum OPCODES isPsuedoup(const char *opcode) {
 }
 
 int incrementLocationCntr() {
-    if (locationCntr >= USHRT_MAX -1) {
+    if (locationCntr >= USHRT_MAX - 1) {
         actualPc = locationCntr + 1;
         logging(error, 2, S, "Unauthorized memory access after location: ", I, actualPc);
         exit(4);
@@ -904,7 +940,7 @@ void tryAddLabel(const Instruction *i) {
     if (i->label != NULL && strlen(i->label) != 0) {
         logging(debug, 3, S, "cur label: '", S, i->label, S, "'");
         validateLabel(i->label);
-        addLebel(i->label, getLocationCntr());
+        addLabel(i->label, getLocationCntr());
     }
 }
 
@@ -951,7 +987,7 @@ void errorValidateLabel(char *label) {
     exit(4);
 }
 
-void addLebel(char *label, int lc) {
+void addLabel(char *label, int lc) {
     int curTabelIndex = getTableSize();
     int i;
 
