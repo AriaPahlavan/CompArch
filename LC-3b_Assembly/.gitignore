@@ -11,4 +11,5 @@ CMakeLists.txt
 *.asm
 *.obj
 *.o
-grade
+*.txt
+*.linux
