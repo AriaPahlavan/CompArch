@@ -28,7 +28,7 @@
 #define LOG_LEVEL INFO
 #define MAX_ADDRESS USHRT_MAX
 #define pc(lc) lc+2
-#define caller(arg) __FUNCTION__, __LINE__, arg
+#define deprecated_caller(arg) __FUNCTION__, __LINE__, arg
 #define deprecated_debug __FUNCTION__, __LINE__, DEBUG
 #define deprecated_info __FUNCTION__, __LINE__, INFO
 #define deprecated_warn __FUNCTION__, __LINE__, WARN
@@ -42,7 +42,6 @@
 #define adjOpcode(val) val << 3*nibble
 #define adjArgOne(val) val << 2*nibble+1
 #define adjArgTwo(val) val << nibble+2
-
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -143,7 +142,6 @@ static FILE *outfile;
 static int symbolTableLength = 0;
 uint16_t locationCntr = -1;
 int actualPc = -1;
-static int logNum = 0;
 const static int trapVectorVal[] = {0x20, 0x21, 0x22, 0x23, 0x25};
 const static char *trapVectorTable[] = {"x20", "x21", "x22", "x23", "x25"};
 const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
@@ -177,6 +175,7 @@ void parsCommandLine(int argc, char *argv[]);
 void testIsOpcode();
 
 void testLimits();
+
 /**
  * @deprecated as of 02/07/2017, replaced by loggingMsg()
  */
@@ -355,8 +354,8 @@ void printLog(const char *func, int line, enum LOG_LEVELS level, int length, voi
 
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
-//    loggingMsg(depricated_info, "Initializing assembly process...");
     loggingMsg("Initializing assembly process...", info);
+
     /* open input/output files*/
     FILE *infile = openFile(argv[1], "r");
     outfile = openFile(argv[2], "w");
@@ -1603,7 +1602,7 @@ void logging(int num, ...) {
     enum LOG_LEVELS lvl;
     void *values[100];
     enum DATA_TYPE tags[100];
-    enum DATA_TYPE T;
+    enum DATA_TYPE TAG;
     void *V;
 
     /* initialize valist for num number of arguments */
@@ -1614,9 +1613,10 @@ void logging(int num, ...) {
     values[cur_indx] = va_arg(valist, void *);
     cur_indx++;
 
-    while ((T = va_arg(valist, enum DATA_TYPE)) != EOL) {
-        tags[cur_indx] = T;
-        if (T == ENDL) {
+    while ((TAG = va_arg(valist, enum DATA_TYPE)) != EOL) {
+        tags[cur_indx] = TAG;
+
+        if (TAG == ENDL || TAG == N || TAG == TAB || TAG == T) {
             cur_indx++;
             continue;
         }
@@ -1637,7 +1637,7 @@ void logging(int num, ...) {
 void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
               const enum DATA_TYPE *tags, bool header) {
     int i;
-    enum DATA_TYPE T;
+    enum DATA_TYPE TAG;
     void *V;
     if (level >= LOG_LEVEL) {
         int curLogNum = getLogNum();
@@ -1648,18 +1648,15 @@ void printLog(const char *func, int line, enum LOG_LEVELS level, int length, voi
         }
 
         /* access all the arguments assigned to valist */
-        for (i = 0; i < length;) {
-            T = tags[i];
+        for (i = 0; i < length; i++) {
+            TAG = tags[i];
 
-            if (T == N || T == ENDL) {
+            if (TAG == N || TAG == ENDL || TAG == TAB || TAG == T)
                 V = EMPTY_VAL;
-                T == ENDL ? i++ : 0;
-            } else {
+            else
                 V = values[i];
-                i++;
-            }
 
-            output(V, T);
+            output(V, TAG);
         }
 
         setColorPrint(level);
@@ -1683,7 +1680,7 @@ void loggingNoHeader(int num, ...) {
     enum LOG_LEVELS lvl;
     void *values[100];
     enum DATA_TYPE tags[100];
-    enum DATA_TYPE T;
+    enum DATA_TYPE TAG;
     void *V;
 
     /* initialize valist for num number of arguments */
@@ -1694,9 +1691,10 @@ void loggingNoHeader(int num, ...) {
     values[cur_indx] = va_arg(valist, void *);
     cur_indx++;
 
-    while ((T = va_arg(valist, enum DATA_TYPE)) != EOL) {
-        tags[cur_indx] = T;
-        if (T == ENDL) {
+    while ((TAG = va_arg(valist, enum DATA_TYPE)) != EOL) {
+        tags[cur_indx] = TAG;
+
+        if (TAG == ENDL || TAG == N || TAG == TAB || TAG == T) {
             cur_indx++;
             continue;
         }
@@ -1746,9 +1744,8 @@ void deprecatedLoggingFunc(const char *func, int line, enum LOG_LEVELS lvl, int 
 }
 
 int getLogNum() {
-    int curNum = logNum;
-    logNum += 1;
-    return curNum;
+    static int logNum = 0;
+    return logNum++;
 }
 
 void colorPrint(enum LOG_LEVELS lvl, const char *txt) {
