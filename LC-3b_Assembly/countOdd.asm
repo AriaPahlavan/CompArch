@@ -6,7 +6,7 @@
 	        LEA R0, TOTAL
 	        LDW R3, R0, #0      ;R3=256
 
-	        LEA R0, NUMS_LOC
+	        LEA R0, NUMSLOC
 	        LDW R0, R0, #0       ;R0=x4000
 	        
 FETCH	        LDB R1, R0, #0
@@ -26,17 +26,17 @@ ODD1            ADD R5, R5, #1
 	        
 ODD2            ADD R5, R5, #1
 
-EVENT2          ADD R3, R3, #-2      
+EVEN2          ADD R3, R3, #-2
 	        BRp FETCH
 	        
-	        LEA R0, RES_LOC
+	        LEA R0, RESLOC
 	        LDW R0, R0, #0     ;R0 = x4100
 	        STW R5, R0, #0
 
 	        HALT
 
 
-NUMS_LOC    .FILL x4000
-RES_LOC	    .FILL x4100
+NUMSLOC    .FILL x4000
+RESLOC	    .FILL x4100
 TOTAL	    .FILL #256
 	        .END

@@ -1,6 +1,6 @@
 /*
 	Name 1: Aria Pahlavan
-	UTEID 1: AP443
+	UTEID 1: AP44342
 */
 #include <stdio.h>      /* standard input/output library */
 #include <stdlib.h>     /* Standard C Library */
@@ -29,10 +29,15 @@
 #define MAX_ADDRESS USHRT_MAX
 #define pc(lc) lc+2
 #define caller(arg) __FUNCTION__, __LINE__, arg
-#define debug __FUNCTION__, __LINE__, DEBUG
-#define info __FUNCTION__, __LINE__, INFO
-#define warn __FUNCTION__, __LINE__, WARN
-#define error __FUNCTION__, __LINE__, ERROR
+#define deprecated_debug __FUNCTION__, __LINE__, DEBUG
+#define deprecated_info __FUNCTION__, __LINE__, INFO
+#define deprecated_warn __FUNCTION__, __LINE__, WARN
+#define deprecated_error __FUNCTION__, __LINE__, ERROR
+#define debug EOL, __FUNCTION__, __LINE__, DEBUG
+#define info EOL, __FUNCTION__, __LINE__, INFO
+#define warn EOL, __FUNCTION__, __LINE__, WARN
+#define error EOL, __FUNCTION__, __LINE__, ERROR
+#define MAX_LOG_DEF_ARGS 4
 #define nibble 4
 #define adjOpcode(val) val << 3*nibble
 #define adjArgOne(val) val << 2*nibble+1
@@ -75,6 +80,8 @@ enum DATA_TYPE {
     ULONG_INT,
     S,
     I,
+    Id,
+    Ix,
     L,
     C,
     P,
@@ -93,7 +100,8 @@ enum DATA_TYPE {
     N,
     ENDL,
     T,
-    TAB
+    TAB,
+    EOL
 };
 enum LOG_LEVELS {
     DEBUG,
@@ -169,14 +177,19 @@ void parsCommandLine(int argc, char *argv[]);
 void testIsOpcode();
 
 void testLimits();
-
-void loggingMsg(const char *func, int line, enum LOG_LEVELS lvl, const char *msg);
+/**
+ * @deprecated as of 02/07/2017, replaced by loggingMsg()
+ */
+void deprecatedLoggingMsgFunc(const char *func, int line, enum LOG_LEVELS lvl, const char *msg);
 
 enum OPCODES isPsuedoup(const char *opcode);
 
 enum OPCODES getOpcodeEnum(Instruction *inst);
 
-void logging(const char *func, int line, enum LOG_LEVELS lvl, int num, ...);
+/**
+ * @deprecated as of 02/07/2017, replaced by logging()
+ */
+void deprecatedLoggingFunc(const char *func, int line, enum LOG_LEVELS lvl, int num, ...);
 
 void print(int num, ...);
 
@@ -273,6 +286,10 @@ void processPseudoOpe(Instruction *i);
 
 int16_t outputFill(const char *arg);
 
+uint16_t getLocationCntr();
+
+uint16_t getProgramCntr();
+
 void writeIntToFile(FILE *file, uint16_t val);
 
 void validateArgNum(Instruction *i);
@@ -319,10 +336,27 @@ void errorOrigNotFound();
 
 void errorEndNotReached();
 
+void exitWithError(int errorCode);
+
+void errorInvalidConst(const char *arg);
+
+void errorEmptyFile();
+
+void logging(int num, ...);
+
+void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl);
+
+void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
+              const enum DATA_TYPE *tags, bool header);
+
+void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
+              const enum DATA_TYPE *tags, bool header);
+
+
 /**-------------------------------- Function Definitions ------------------------------*/
 int main(int argc, char *argv[]) {
-    loggingMsg(info, "Initializing...");
-
+//    loggingMsg(depricated_info, "Initializing assembly process...");
+    loggingMsg("Initializing assembly process...", info);
     /* open input/output files*/
     FILE *infile = openFile(argv[1], "r");
     outfile = openFile(argv[2], "w");
@@ -336,17 +370,8 @@ int main(int argc, char *argv[]) {
     /* close input/output files*/
     closeFiles(infile);
     closeFiles(outfile);
-    loggingMsg(info, "Assembly completed successfully!");
+    loggingMsgNoHeader(AGRN"PASS: "ANRM"Program assembled successfully!", info);
     exit(0);
-}
-
-void testSymbolTabel() {
-    int i;
-
-    for (i = 0; i < getTableSize(); ++i) {
-        logging(debug, 6, S, "'", S, symbolTable[i].label, S, "' at index ", I, i, S, " with address: ", I,
-                symbolTable[i].address);
-    }
 }
 
 int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
@@ -363,7 +388,7 @@ int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
 
         if (lRet != DONE && lRet != EMPTY_LINE) {/* instruction */
             instructionCounter++;
-            logging(debug, 1, INSTRUCTION, i);
+            deprecatedLoggingFunc(deprecated_debug, 1, INSTRUCTION, i);
 
             if (passNum == FIRST_PASS) tryAddLabel(i);
             if (strcmp(i->opcode, ".end") == 0) isPassedEnd = true;
@@ -384,32 +409,18 @@ int parseFile(const FILE *infile, Instruction *i, enum ASM_PHASE passNum) {
 
     if (isPassedOrig && !isPassedEnd) errorEndNotReached();
     if (!isPassedOrig && isPassedEnd) errorOrigNotFound();
+    if (!isPassedOrig && !isPassedEnd) errorEmptyFile();
 
-    logging(debug, 2, S, "Number of instruction in the file=", I, instructionCounter);
+    deprecatedLoggingFunc(deprecated_debug, 2, S, "Number of instruction in the file=", I, instructionCounter);
 
     return instructionCounter;
-}
-
-void errorEndNotReached() {
-    loggingMsg(error, ".END not reached.");
-    exit(4);
-}
-
-void errorOrigNotFound() {
-    loggingMsg(error, "Did not find .ORIG");
-    exit(4);
-}
-
-void errorUnauthorizedInstruction(Instruction *i) {
-    loggingMsg(error, "Found instruction before .ORIG");
-    exit(4);
 }
 
 uint16_t initLocationCntr(const Instruction *i) {
     validateAddrStr(i->arg1);
     locationCntr = toNum(i->arg1);
     if (locationCntr % 2 != 0) errorUnalignedAddr(locationCntr);
-    logging(debug, 2, S, "Initialized LC to ", I, locationCntr);
+    deprecatedLoggingFunc(deprecated_debug, 2, S, "Initialized LC to ", I, locationCntr);
     return locationCntr;
 }
 
@@ -423,16 +434,6 @@ uint16_t getProgramCntr() {
     return pc(locationCntr);
 }
 
-void errorPCoutOfBound() {
-    logging(error, 2, S, "Program counter is out of bound: ", I, pc(locationCntr));
-    exit(4);
-}
-
-void errorLCoutOfBound() {
-    logging(error, 2, S, "Location counter is out of bound: ", I, locationCntr);
-    exit(4);
-}
-
 void validateAddrStr(char *addr) {
     int address = toNum(addr);
 
@@ -443,18 +444,13 @@ void validateAddrStr(char *addr) {
 void validateFillVal(char *val) {
     int result = toNum(val);
 
-    if (result < SHRT_MIN || result > SHRT_MAX)
-        errorValidateFillVal(result);
-}
-
-void errorValidateFillVal(int result) {
-    logging(error, 2, S, "Found invalid .Fill value: ", I, result);
-    exit(4);
-}
-
-void errorValidateAddr(int addr) {
-    logging(error, 2, S, "Found an invalid address: ", I, addr);
-    exit(4);
+    if (result >= 0) {
+        if (result < 0 || result > USHRT_MAX)
+            errorValidateFillVal(result);
+    } else {
+        if (result < SHRT_MIN || result > SHRT_MAX)
+            errorValidateFillVal(result);
+    }
 }
 
 void decodeInstruction(Instruction *i) {
@@ -463,19 +459,19 @@ void decodeInstruction(Instruction *i) {
     enum OPCODES opcode = getOpcodeEnum(i);
 
     output = adjOpcode(opcodes[opcode]);
-    logging(debug, 2, I, output, INSTRUCTION, i);
+    deprecatedLoggingFunc(deprecated_debug, 2, I, output, INSTRUCTION, i);
 
     validateArgNum(i);
 
     uint16_t arg1 = processArg(i, opcode, 1);
     uint16_t o = output + arg1;
-    logging(debug, 6, I, arg1, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i);
+    logging(I, arg1, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i, debug);
     output = o;
 
 
     uint16_t arg2 = processArg(i, opcode, 2);
     o = output + arg2;
-    logging(debug, 6, I, arg2, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i);
+    deprecatedLoggingFunc(deprecated_debug, 6, I, arg2, S, " + ", I, output, S, " = ", I, o, INSTRUCTION, i);
     output = o;
 
     outputDecodeResults(i, opcode, output);
@@ -498,7 +494,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
             if (validateRegister(i->arg3, false) != -1) { /*register arg*/
                 output += reg;
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "ADD result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "ADD result is: ", I, output);
             } else { /*immediate value arg*/
                 int arg = (toNum(i->arg3));
 
@@ -507,20 +503,28 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 arg = arg & imm5mask;
                 output += (arg + 0x0020);
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "ADD result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "ADD result is: ", I, output);
             }
 
             break;
         case ldb:
-        case ldw:
         case stb:
+            if (true) {
+                int16_t arg = toNum(i->arg3);
+                if (arg > MAX_OFFSET6 || arg < MIN_OFFSET6) errorOffset6OutOfBound(arg);
+                output += arg & offset6mask;
+                writeIntToFile(outfile, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "LDB result is: ", I, output);
+            }
+            break;
+        case ldw:
         case stw:
             if (true) {
                 int16_t arg = toNum(i->arg3);
                 if (arg > MAX_OFFSET6 || arg < MIN_OFFSET6) errorOffset6OutOfBound(arg);
                 output += arg & offset6mask;
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "LDB result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "LDB result is: ", I, output);
             }
             break;
         case not:
@@ -528,7 +532,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 int16_t rest = 0x003F;
                 output += rest;
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "NOT result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "NOT result is: ", I, output);
             }
             break;
         case brn:
@@ -554,13 +558,13 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 checkPSoffset9(pcoff9);
                 output += pcoff9;
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "BR or LEA result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "BR or LEA result is: ", I, output);
             }
             break;
         case jmp:
         case jsrr:
             writeIntToFile(outfile, output);
-            logging(debug, 2, S, "JMP or JSRR result is: ", I, output);
+            deprecatedLoggingFunc(deprecated_debug, 2, S, "JMP or JSRR result is: ", I, output);
             break;
         case jsr:
             if (true) {
@@ -571,7 +575,7 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 checkPCoffset11(pcoff11);
                 output += (pcoff11 + 0x0800);
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "JSR result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "JSR result is: ", I, output);
             }
             break;
         case lshf:
@@ -587,13 +591,13 @@ void outputDecodeResults(Instruction *i, enum OPCODES opcode, uint16_t output) {
                 if (opcode == rshfa) output += 0x0030;
 
                 writeIntToFile(outfile, output);
-                logging(debug, 2, S, "SHFT result is: ", I, output);
+                deprecatedLoggingFunc(deprecated_debug, 2, S, "SHFT result is: ", I, output);
             }
             break;
         case trap:
-            output += trapVectorVal[validateTrapArg(i->arg1)];
+            output += validateTrapArg(i->arg1);
             writeIntToFile(outfile, output);
-            logging(debug, 2, S, "TRAP result is: ", I, output);
+            deprecatedLoggingFunc(deprecated_debug, 2, S, "TRAP result is: ", I, output);
             break;
     }
 }
@@ -621,49 +625,20 @@ void checkPSoffset9(int16_t offset) {
     }
 }
 
-void errorPcoffsetoutOfBound(int16_t pcoffset) {
-    logging(error, 2, S, "PCoffset is out of bound: ", I16, pcoffset);
-    exit(4);
-}
-
-void errorSpecOutOfBound(Instruction *i) {
-    logging(error, 2, S, "Found out of boound areguement in: ", INSTRUCTION, i);
-    exit(3);
-}
-
 int validateTrapArg(const char *arg) {
     int i;
+    int tv = toNum(arg);
 
-    if (toNum(arg) < 0) errorNegTrapVector(arg);
+    if (arg[0] != 'x' && arg[0] != 'X') errorTrapVector(arg);
+    if (tv < 0) errorNegTrapVector(arg);
+    if (tv > 256) errorTrapVector(arg);
 
-    for (i = 0; i < 5; ++i)
-        if (strcmp(arg, trapVectorTable[i]) == 0) return i;
-
-    errorTrapVector(arg);
-}
-
-void errorNegTrapVector(const char *arg) {
-    logging(error, 2, S, "Negative trap vector: ", S, arg);
-    exit(3);
-}
-
-void errorTrapVector(const char *arg) {
-    logging(error, 2, S, "Invalid trap vector: ", S, arg);
-    exit(4);
-}
-
-void errorAmnt4outOfBound(Instruction *i) {
-    logging(error, 2, S, "Amount 4 outof bound for: ", INSTRUCTION, i);
-    exit(3);
-}
-
-void errorOffset6OutOfBound(int16_t arg) {
-    logging(error, 2, S, "Could not find label: ", I16, arg);
-    exit(4);
+    deprecatedLoggingFunc(deprecated_debug, 2, S, "Travp subroutine is: ", I, tv);
+    return tv;
 }
 
 uint16_t getLabelAddr(const char *label) {
-    logging(debug, 2, S, "Getting label: ", S, label);
+    deprecatedLoggingFunc(deprecated_debug, 2, S, "Getting label: ", S, label);
     int i;
 
     for (i = 0; i < getTableSize(); ++i)
@@ -671,11 +646,6 @@ uint16_t getLabelAddr(const char *label) {
             return symbolTable[i].address;
 
     errorLabelNotFound(label);
-}
-
-void errorLabelNotFound(const char *label) {
-    logging(error, 3, S, "Could not find label: '", S, label, S, "'");
-    exit(1);
 }
 
 void validateArgNum(Instruction *i) {
@@ -735,11 +705,6 @@ void validateArgNum(Instruction *i) {
     }
 }
 
-void errorValidArgNum(Instruction *i, int numExtraArgs) {
-    logging(error, 4, S, "Found at least ", I, numExtraArgs, S, " extra args in: ", INSTRUCTION, i);
-    exit(4);
-}
-
 bool isEmptyArg(const char *arg) {
     if (strcmp(arg, "") != 0)
         return false;
@@ -762,7 +727,7 @@ uint16_t outputOrig(const char *arg) {
 }
 
 int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
-    /*logging();*/
+    deprecatedLoggingFunc(deprecated_debug, 2, S, "Processing argument #", I, argNum);
     uint16_t result = 0;
     uint8_t reg = 0;
     const char *arg;
@@ -785,7 +750,8 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
             result = reg = validateRegister(arg, true);
             if (argNum == 1) result = adjArgOne(result);
             else result = adjArgTwo(result);
-            logging(debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #", I, argNum);
+            deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
+                                  I, argNum);
             break;
         case brn:
             if (argNum == 1) result = adjArgOne(4);
@@ -821,7 +787,9 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
             if (argNum == 2) {
                 result = reg = validateRegister(i->arg1, true);
                 result = adjArgTwo(result);
-                logging(debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #", I, argNum);
+                deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S,
+                                      " as arg #", I,
+                                      argNum);
             }
             break;
         case jsr:
@@ -852,16 +820,11 @@ int16_t processArg(Instruction *i, enum OPCODES opcode, int argNum) {
                 if (opcode == orig) result = outputOrig(i->arg1);
 
             }
-            logging(debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
+            deprecatedLoggingFunc(deprecated_debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
         case end:
             break;
     }
     return result;
-}
-
-void errorUnalignedAddr(uint16_t val) {
-    logging(error, 2, S, "Unaligned address found: ", I, val);
-    exit(3);
 }
 
 int16_t validateRegister(const char *reg, bool isHard) {
@@ -878,9 +841,9 @@ int16_t validateRegister(const char *reg, bool isHard) {
     return result;
 }
 
-void errorValidateRegister(const char *reg) {
-    logging(error, 3, S, "Found an invalid register: '", S, reg, S, "'");
-    exit(4);
+void exitWithError(int errorCode) {
+    loggingNoHeader(S, ARED"FAIL: "ANRM"Exit with error code ", Id, errorCode, error);
+    exit(errorCode);
 }
 
 enum OPCODES getOpcodeEnum(Instruction *inst) {
@@ -901,17 +864,12 @@ enum OPCODES getOpcodeEnum(Instruction *inst) {
 
     inst->enumOpcode = result;
 
-    logging(debug, 5,
-            S, opcode, S, " =? ", S, lowerOpcodes[inst->enumOpcode],
-            S, ", and a pseudoup? ", I, inst->isPseudoOpe
+    deprecatedLoggingFunc(deprecated_debug, 5,
+                          S, opcode, S, " =? ", S, lowerOpcodes[inst->enumOpcode],
+                          S, ", and a pseudoup? ", I, inst->isPseudoOpe
     );
 
     return result;
-}
-
-void errorGetOpcodeEnum(const char *opcode) {
-    logging(error, 3, S, "Invalid opcode: '", S, opcode, S, "'");
-    exit(2);
 }
 
 enum OPCODES isPsuedoup(const char *opcode) {
@@ -928,8 +886,8 @@ enum OPCODES isPsuedoup(const char *opcode) {
 int incrementLocationCntr() {
     if (locationCntr >= USHRT_MAX - 1) {
         actualPc = locationCntr + 1;
-        logging(error, 2, S, "Unauthorized memory access after location: ", I, actualPc);
-        exit(4);
+        deprecatedLoggingFunc(deprecated_error, 2, S, "Unauthorized memory access after location: ", I, actualPc);
+        exitWithError(4);
     } else {
         locationCntr = pc(locationCntr);
         return locationCntr;
@@ -938,20 +896,20 @@ int incrementLocationCntr() {
 
 void tryAddLabel(const Instruction *i) {
     if (i->label != NULL && strlen(i->label) != 0) {
-        logging(debug, 3, S, "cur label: '", S, i->label, S, "'");
+        deprecatedLoggingFunc(deprecated_debug, 3, S, "cur label: '", S, i->label, S, "'");
         validateLabel(i->label);
         addLabel(i->label, getLocationCntr());
     }
 }
 
 void toString(const Instruction *i) {
-    logging(debug, 13,
-            S, "{Label: "AMAG" ", S, i->label,
-            S, ANRM", Opcode:"AMAG" ", S, i->opcode,
-            S, ANRM", Arg1:"  AMAG" ", S, i->arg1,
-            S, ANRM", Arg2:"  AMAG" ", S, i->arg2,
-            S, ANRM", Arg3:"  AMAG" ", S, i->arg3,
-            S, ANRM", Arg4:"  AMAG" ", S, i->arg4, S, ANRM"}"
+    deprecatedLoggingFunc(deprecated_debug, 13,
+                          S, "{Label: "AMAG" ", S, i->label,
+                          S, ANRM", Opcode:"AMAG" ", S, i->opcode,
+                          S, ANRM", Arg1:"  AMAG" ", S, i->arg1,
+                          S, ANRM", Arg2:"  AMAG" ", S, i->arg2,
+                          S, ANRM", Arg3:"  AMAG" ", S, i->arg3,
+                          S, ANRM", Arg4:"  AMAG" ", S, i->arg4, S, ANRM"}"
     );
 }
 
@@ -982,11 +940,6 @@ int isAlnumeric(char *label) {
     return 1;
 }
 
-void errorValidateLabel(char *label) {
-    logging(error, 3, S, "Found an invalid label '", S, label, S, "'");
-    exit(4);
-}
-
 void addLabel(char *label, int lc) {
     int curTabelIndex = getTableSize();
     int i;
@@ -1004,27 +957,17 @@ void addLabel(char *label, int lc) {
     if (strcmp(labelCpy, label) != 0)
         errorCopyLabel(labelCpy, label);
 
-    logging(debug, 4,
-            S, "Add symbol: '",
-            S, symbolTable[curTabelIndex].label,
-            S, "' with addr=",
-            I, symbolTable[curTabelIndex].address, ", as element #", I,
-            curTabelIndex);
+    deprecatedLoggingFunc(deprecated_debug, 4,
+                          S, "Add symbol: '",
+                          S, symbolTable[curTabelIndex].label,
+                          S, "' with addr=",
+                          I, symbolTable[curTabelIndex].address, ", as element #", I,
+                          curTabelIndex);
     increaseTabelSize();
 }
 
-void errorCopyLabel(char *labelCpy, char *label) {
-    logging(warn, 5, S, "Copy was unsuccessful, expected '", S, label, S, "',  actual '", S, labelCpy, S, "'");
-    exit(4);
-}
-
-void errorAddLabel(const char *dupLabel) {
-    logging(error, 2, S, "Duplicate label found: ", S, dupLabel);
-    exit(4);
-}
-
 void increaseTabelSize() {
-    loggingMsg(debug, "Incrementing tabel size");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Incrementing tabel size");
 
     if (symbolTableLength == MAX_SYMBOLS)
         errorIncreaseTableSize();
@@ -1032,27 +975,22 @@ void increaseTabelSize() {
     symbolTableLength++;
 }
 
-void errorIncreaseTableSize() {
-    logging(error, 1, S, "Cannot increase tabel size bigger than limit!");
-    exit(4);
-}
-
 int getTableSize() {
     return symbolTableLength;
 }
 
 void writeToFile(FILE *file, const char *text) {
-    loggingMsg(debug, "Writing to file...");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Writing to file...");
     int lInstr;
     fprintf(file, text, lInstr);
 
-    logging(debug, 2,
-            S, "Success: wrote to file: ", S, text
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "Success: wrote to file: ", S, text
     );
 }
 
 void writeIntToFile(FILE *file, uint16_t val) {
-    loggingMsg(debug, "Writing to file...");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Writing to file...");
     int mask = 0x0000F000, i;
 
     writeToFile(outfile, "0x");
@@ -1065,14 +1003,14 @@ void writeIntToFile(FILE *file, uint16_t val) {
 
     writeToFile(outfile, "\n");
 
-    logging(debug, 2,
-            S, "Success: wrote to file: ", I, val
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "Success: wrote to file: ", I, val
     );
 }
 
 FILE *openFile(char *filename, char *permission) {
-    logging(debug, 2,
-            S, "Openning file: ", S, filename);
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "Openning file: ", S, filename);
 
     /* open the source file */
     FILE *file = fopen(filename, permission);
@@ -1081,40 +1019,27 @@ FILE *openFile(char *filename, char *permission) {
         errorOpenFile(filename);
 
     else {
-        logging(debug, 2,
-                S, "Successfully opened file: ",
-                S, filename
+        deprecatedLoggingFunc(deprecated_debug, 2,
+                              S, "Successfully opened file: ",
+                              S, filename
         );
     }
 
     return file;
 }
 
-void errorOpenFile(const char *filename) {
-    logging(warn, 2,
-            S, ARED "Failed" ANRM " to open file ", S, filename
-    );
-    exit(4);
-}
-
 void closeFiles(FILE *file) {
-    logging(debug, 2,
-            S, "Closing file descriptor: ",
-            I, file
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "Closing file descriptor: ",
+                          I, file
     );
 
     if (fclose(file) != 0)
         errorCloseFile();
 
     else {
-        loggingMsg(debug, "Successfully closed file");
+        deprecatedLoggingMsgFunc(deprecated_debug, "Successfully closed file");
     }
-}
-
-void errorCloseFile() {
-    logging(error, 1,
-            S, "Error wile attempting to close file descriptor: "
-    );
 }
 
 int isOpcode(char *potential_opcode) {
@@ -1151,12 +1076,13 @@ int toNum(char *pStr) {
         }
         t_ptr = pStr;
         t_length = strlen(t_ptr);
+
         for (k = 0; k < t_length; k++) {
             if (!isdigit(*t_ptr)) {
-                logging(error, 2,
-                        S, "invalid decimal operand, ", S, orig_pStr
+                deprecatedLoggingFunc(deprecated_error, 2,
+                                      S, "invalid decimal operand, ", S, orig_pStr
                 );
-                exit(4);
+                exitWithError(4);
             }
             t_ptr++;
         }
@@ -1175,12 +1101,13 @@ int toNum(char *pStr) {
         }
         t_ptr = pStr;
         t_length = strlen(t_ptr);
+
         for (k = 0; k < t_length; k++) {
             if (!isxdigit(*t_ptr)) {
-                logging(error, 2,
-                        S, "invalid hex operand, ", S, orig_pStr
+                deprecatedLoggingFunc(deprecated_error, 2,
+                                      S, "invalid hex operand, ", S, orig_pStr
                 );
-                exit(4);
+                exitWithError(4);
             }
             t_ptr++;
         }
@@ -1190,10 +1117,8 @@ int toNum(char *pStr) {
             lNum = -lNum;
         return lNum;
     } else {
-        logging(error, 2,
-                S, "Invalid operand, ", S, orig_pStr
-        );
-        exit(4);  /* This has been changed from error code 3 to error code 4, see clarification 12 */
+        deprecatedLoggingFunc(deprecated_error, 2, S, "Invalid operand, ", S, orig_pStr);
+        exitWithError(4);  /* This has been changed from error code 3 to error code 4, see clarification 12 */
     }
 }
 
@@ -1256,31 +1181,178 @@ void parsCommandLine(int argc, char **argv) {
     iFileName = argv[1];
     oFileName = argv[2];
 
-    logging(debug, 6,
-            S, "program name = ", S, prgName, N,
-            S, "input file name = ", S, iFileName, N,
-            S, "output file name = ", S, oFileName
+    deprecatedLoggingFunc(deprecated_debug, 6,
+                          S, "program name = ", S, prgName, N,
+                          S, "input file name = ", S, iFileName, N,
+                          S, "output file name = ", S, oFileName
     );
 }
 
+
+/**------------------------------------- Error Logs -----------------------------------*/
+void errorEmptyFile() {
+    deprecatedLoggingMsgFunc(deprecated_error, "Input file CANNOT be empty");
+    exitWithError(4);
+}
+
+void errorEndNotReached() {
+    deprecatedLoggingMsgFunc(deprecated_error, ".END not reached.");
+    exitWithError(4);
+}
+
+void errorOrigNotFound() {
+    deprecatedLoggingMsgFunc(deprecated_error, "Did not find .ORIG");
+    exitWithError(4);
+}
+
+void errorUnauthorizedInstruction(Instruction *i) {
+    deprecatedLoggingMsgFunc(deprecated_error, "Found instruction before .ORIG");
+    exitWithError(4);
+}
+
+void errorPCoutOfBound() {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Program counter is out of bound: ", I, pc(locationCntr));
+    exitWithError(4);
+}
+
+void errorLCoutOfBound() {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Location counter is out of bound: ", I, locationCntr);
+    exitWithError(4);
+}
+
+void errorValidateFillVal(int result) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Found out of bound .Fill value: ", I, result);
+    exitWithError(4);
+}
+
+void errorValidateAddr(int addr) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Found an invalid address: ", I, addr);
+    exitWithError(4);
+}
+
+void errorPcoffsetoutOfBound(int16_t pcoffset) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "PCoffset is out of bound: ", I16, pcoffset);
+    exitWithError(4);
+}
+
+void errorSpecOutOfBound(Instruction *i) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Found out of boound areguement in: ", INSTRUCTION, i);
+    exitWithError(3);
+}
+
+void errorNegTrapVector(const char *arg) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Negative trap vector: ", S, arg);
+    exitWithError(3);
+}
+
+void errorTrapVector(const char *arg) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Invalid trap vector: ", S, arg);
+    exitWithError(4);
+}
+
+void errorAmnt4outOfBound(Instruction *i) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Amount 4 outof bound for: ", INSTRUCTION, i);
+    exitWithError(3);
+}
+
+void errorOffset6OutOfBound(int16_t arg) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Could not find label: ", I16, arg);
+    exitWithError(4);
+}
+
+void errorLabelNotFound(const char *label) {
+    deprecatedLoggingFunc(deprecated_error, 3, S, "Could not find label: '", S, label, S, "'");
+    exitWithError(1);
+}
+
+void errorValidArgNum(Instruction *i, int numExtraArgs) {
+    deprecatedLoggingFunc(deprecated_error, 4, S, "Found at least ", I, numExtraArgs, S, " extra args in: ",
+                          INSTRUCTION, i);
+    exitWithError(4);
+}
+
+void errorUnalignedAddr(uint16_t val) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Unaligned address found: ", I, val);
+    exitWithError(3);
+}
+
+void errorValidateRegister(const char *reg) {
+    deprecatedLoggingFunc(deprecated_error, 3, S, "Found an invalid register: '", S, reg, S, "'");
+    exitWithError(4);
+}
+
+void errorInvalidConst(const char *arg) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Invalid constant: ", S, arg);
+    exitWithError(4);
+}
+
+void errorValidateLabel(char *label) {
+    deprecatedLoggingFunc(deprecated_error, 3, S, "Found an invalid label '", S, label, S, "'");
+    exitWithError(4);
+}
+
+void errorGetOpcodeEnum(const char *opcode) {
+    deprecatedLoggingFunc(deprecated_error, 3, S, "Invalid opcode: '", S, opcode, S, "'");
+    exitWithError(2);
+}
+
+void errorCloseFile() {
+    deprecatedLoggingFunc(deprecated_error, 1,
+                          S, "Error wile attempting to close file descriptor: "
+    );
+    exitWithError(4);
+}
+
+void errorOpenFile(const char *filename) {
+    deprecatedLoggingFunc(deprecated_error, 2, S, "Failed to open file: ", S, filename);
+    exitWithError(4);
+}
+
+void errorIncreaseTableSize() {
+    deprecatedLoggingFunc(deprecated_error, 1, S, "Cannot increase tabel size bigger than limit!");
+    exitWithError(4);
+}
+
+void errorCopyLabel(char *labelCpy, char *label) {
+    logging(S, "Copy was unsuccessful, expected '", S, label, S, "',  actual '", S, labelCpy, S, "'", error);
+    exitWithError(4);
+}
+
+void errorAddLabel(const char *dupLabel) {
+    logging(S, "Duplicate label found: ", S, dupLabel, error);
+    exitWithError(4);
+}
+
+
 /**------------------------------------- Tests ---------------------------------------*/
+void testSymbolTabel() {
+    int i;
+
+    for (i = 0; i < getTableSize(); ++i) {
+        deprecatedLoggingFunc(deprecated_debug, 6, S, "'", S, symbolTable[i].label, S, "' at index ", I, i, S,
+                              " with address: ",
+                              I,
+                              symbolTable[i].address);
+    }
+}
+
 void testOpenCloseFile(int argc, char *argv[], FILE *infile, FILE *outfile) {
     /* open the source file */
     infile = fopen(argv[1], "r");
     outfile = fopen(argv[2], "w");
 
     if (!infile) {
-        logging(warn, 2,
-                S, "Error: Cannot open file ", S, argv[1]);
-        exit(4);
+        deprecatedLoggingFunc(deprecated_warn, 2,
+                              S, "Error: Cannot open file ", S, argv[1]);
+        exitWithError(4);
     }
     if (!outfile) {
-        logging(warn, 2,
-                S, "Error: Cannot open file ", S, argv[2]);
-        exit(4);
+        deprecatedLoggingFunc(deprecated_warn, 2,
+                              S, "Error: Cannot open file ", S, argv[2]);
+        exitWithError(4);
     } else {
-        logging(debug, 1,
-                S, "Successfully opened both files!"
+        deprecatedLoggingFunc(deprecated_debug, 1,
+                              S, "Successfully opened both files!"
         );
     }
 
@@ -1301,65 +1373,65 @@ void testWriteToFile(const FILE *infile) {
 void testIsOpcode() {
     char *myOpcode = "AND";
 
-    logging(debug, 2,
-            S, "The reselt is: ",
-            I, isOpcode(myOpcode)
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "The reselt is: ",
+                          I, isOpcode(myOpcode)
     );
 }
 
 void testToNum() {
     /*=====================================Test 1========================================*/
-    loggingMsg(debug, "Converting string to num for valid value 'x3000'");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Converting string to num for valid value 'x3000'");
 
     int result = toNum("xffff");
 
     if (result > MAX_ADDRESS)
-        logging(error, 3, I, result, S, " -> Overflow occured: ", I, USHRT_MAX);
+        deprecatedLoggingFunc(deprecated_error, 3, I, result, S, " -> Overflow occured: ", I, USHRT_MAX);
 
     if (result != 0xffff) {
-        logging(error, 2,
-                S, "Failed: expected result=0xffff but actual result=", I, result
+        deprecatedLoggingFunc(deprecated_error, 2,
+                              S, "Failed: expected result=0xffff but actual result=", I, result
         );
     } else {}
-    logging(debug, 2,
-            S, "Success: expected result=0xffff and actual result=", I, result
+    deprecatedLoggingFunc(deprecated_debug, 2,
+                          S, "Success: expected result=0xffff and actual result=", I, result
     );
 
     /*=====================================Test 2========================================*/
-    loggingMsg(debug, "Converting string to num for valid value '#45'");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Converting string to num for valid value '#45'");
 
     result = toNum("#-45");
 
     if (result != -45)
-        logging(error, 2,
-                S, "Failed: expected result=-45 but actual result=", I, result
+        deprecatedLoggingFunc(deprecated_error, 2,
+                              S, "Failed: expected result=-45 but actual result=", I, result
         );
     else
-        logging(debug, 2,
-                S, "Success: expected result=-45 and actual result=", I, result
+        deprecatedLoggingFunc(deprecated_debug, 2,
+                              S, "Success: expected result=-45 and actual result=", I, result
         );
 
     /*=====================================Test 3========================================*/
-    loggingMsg(debug, "Converting string to num for invalid value '0'. Will exit(4)!");
+    deprecatedLoggingMsgFunc(deprecated_debug, "Converting string to num for invalid value '0'. Will exit(4)!");
     result = toNum("0");
 }
 
 void testLimits() {
-    logging(debug,
-            26, /*(51-36)*2 = 31; subtracting line numbers, to get total number of outputings*/
-            S, "The number of bits in a byte = ", I8, CHAR_BIT, N,
-            S, "The minimum value of SIGNED CHAR = ", I8, SCHAR_MIN, N,
-            S, "The maximum value of SIGNED CHAR = ", I8, SCHAR_MAX, N,
-            S, "The maximum value of UNSIGNED CHAR = ", UI8, UCHAR_MAX, N,
-            S, "The minimum value of SHORT INT = ", I16, SHRT_MIN, N,
-            S, "The maximum value of SHORT INT = ", I16, SHRT_MAX, N,
-            S, "The minimum value of INT = ", I, INT_MIN, N,
-            S, "The maximum value of INT = ", I, INT_MAX, N,
-            S, "The minimum value of CHAR = ", I8, CHAR_MIN, N,
-            S, "The maximum value of CHAR = ", I8, CHAR_MAX, N,
-            S, "The minimum value of LONG = ", L, LONG_MIN, N,
-            S, "The maximum value of LONG = ", L, LONG_MAX, N,
-            S, "The maximum value of UNSIGNED LONG = ", UL, ULONG_MAX
+    deprecatedLoggingFunc(deprecated_debug,
+                          26, /*(51-36)*2 = 31; subtracting line numbers, to get total number of outputings*/
+                          S, "The number of bits in a byte = ", I8, CHAR_BIT, N,
+                          S, "The minimum value of SIGNED CHAR = ", I8, SCHAR_MIN, N,
+                          S, "The maximum value of SIGNED CHAR = ", I8, SCHAR_MAX, N,
+                          S, "The maximum value of UNSIGNED CHAR = ", UI8, UCHAR_MAX, N,
+                          S, "The minimum value of SHORT INT = ", I16, SHRT_MIN, N,
+                          S, "The maximum value of SHORT INT = ", I16, SHRT_MAX, N,
+                          S, "The minimum value of INT = ", I, INT_MIN, N,
+                          S, "The maximum value of INT = ", I, INT_MAX, N,
+                          S, "The minimum value of CHAR = ", I8, CHAR_MIN, N,
+                          S, "The maximum value of CHAR = ", I8, CHAR_MAX, N,
+                          S, "The minimum value of LONG = ", L, LONG_MIN, N,
+                          S, "The maximum value of LONG = ", L, LONG_MAX, N,
+                          S, "The maximum value of UNSIGNED LONG = ", UL, ULONG_MAX
     );
 }
 
@@ -1425,7 +1497,7 @@ void output(void *V, enum DATA_TYPE Type) {
             printf("\n" AWHT "");
             if (i->label != NULL && strcmp("", i->label) != 0) printf("%s   ", i->label);
             printf("%s", i->opcode);
-            if (i->arg1 != NULL && strcmp("", i->arg1) != 0) printf(", %s", i->arg1);
+            if (i->arg1 != NULL && strcmp("", i->arg1) != 0) printf(" %s", i->arg1);
             if (i->arg2 != NULL && strcmp("", i->arg2) != 0) printf(", %s", i->arg2);
             if (i->arg3 != NULL && strcmp("", i->arg3) != 0) printf(", %s", i->arg3);
             if (i->arg4 != NULL && strcmp("", i->arg4) != 0) printf(", %s", i->arg4);
@@ -1479,6 +1551,12 @@ void output(void *V, enum DATA_TYPE Type) {
         case INT:
             printf("%d %s(0x%X)%s", (int) V, AWHT, (int) V, ANRM);
             break;
+        case Id:
+            printf("%d", (int) V);
+            break;
+        case Ix:
+            printf("0x%X", (int) V);
+            break;
         case L:
         case LONG:
             printf("%ld %s(0x%lX)%s", (long) V, AWHT, (long) V, ANRM);
@@ -1508,7 +1586,7 @@ void output(void *V, enum DATA_TYPE Type) {
     }
 }
 
-void loggingMsg(const char *func, int line, enum LOG_LEVELS lvl, const char *msg) {
+void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
     if (lvl >= LOG_LEVEL) {
         int curLogNum = getLogNum();
         setColorPrint(lvl);
@@ -1518,7 +1596,136 @@ void loggingMsg(const char *func, int line, enum LOG_LEVELS lvl, const char *msg
     }
 }
 
-void logging(const char *func, int line, enum LOG_LEVELS lvl, int num, ...) {
+void logging(int num, ...) {
+    va_list valist;
+    char *func;
+    int line, cur_indx = 0, i;
+    enum LOG_LEVELS lvl;
+    void *values[100];
+    enum DATA_TYPE tags[100];
+    enum DATA_TYPE T;
+    void *V;
+
+    /* initialize valist for num number of arguments */
+    va_start(valist, MAX_LOG_DEF_ARGS);
+    if (num == EOL) return;
+
+    tags[cur_indx] = num;
+    values[cur_indx] = va_arg(valist, void *);
+    cur_indx++;
+
+    while ((T = va_arg(valist, enum DATA_TYPE)) != EOL) {
+        tags[cur_indx] = T;
+        if (T == ENDL) {
+            cur_indx++;
+            continue;
+        }
+        values[cur_indx] = va_arg(valist, void *);
+        cur_indx++;
+    }
+    func = va_arg(valist, char *);
+    line = va_arg(valist, int);
+    lvl = va_arg(valist, enum LOG_LEVELS);
+
+    printLog(func, line, lvl, cur_indx, values, tags, true);
+
+    /* clean memory reserved for valist */
+    va_end(valist);
+
+}
+
+void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
+              const enum DATA_TYPE *tags, bool header) {
+    int i;
+    enum DATA_TYPE T;
+    void *V;
+    if (level >= LOG_LEVEL) {
+        int curLogNum = getLogNum();
+
+        if (header) {
+            setColorPrint(level);
+            printf("[%s]: func:'%s' → line:%d (%d)\n" ANRM, enumStrings[level], func, line, curLogNum);
+        }
+
+        /* access all the arguments assigned to valist */
+        for (i = 0; i < length;) {
+            T = tags[i];
+
+            if (T == N || T == ENDL) {
+                V = EMPTY_VAL;
+                T == ENDL ? i++ : 0;
+            } else {
+                V = values[i];
+                i++;
+            }
+
+            output(V, T);
+        }
+
+        setColorPrint(level);
+        printf(" (%d)\n" ANRM, curLogNum);
+    }
+}
+
+void loggingMsgNoHeader(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
+    if (lvl >= LOG_LEVEL) {
+        int curLogNum = getLogNum();
+        printf("%s", msg);
+        setColorPrint(lvl);
+        printf(" (%d)%s\n", curLogNum, ANRM);
+    }
+}
+
+void loggingNoHeader(int num, ...) {
+    va_list valist;
+    char *func;
+    int line, cur_indx = 0, i;
+    enum LOG_LEVELS lvl;
+    void *values[100];
+    enum DATA_TYPE tags[100];
+    enum DATA_TYPE T;
+    void *V;
+
+    /* initialize valist for num number of arguments */
+    va_start(valist, MAX_LOG_DEF_ARGS);
+    if (num == EOL) return;
+
+    tags[cur_indx] = num;
+    values[cur_indx] = va_arg(valist, void *);
+    cur_indx++;
+
+    while ((T = va_arg(valist, enum DATA_TYPE)) != EOL) {
+        tags[cur_indx] = T;
+        if (T == ENDL) {
+            cur_indx++;
+            continue;
+        }
+        values[cur_indx] = va_arg(valist, void *);
+        cur_indx++;
+    }
+    func = va_arg(valist, char *);
+    line = va_arg(valist, int);
+    lvl = va_arg(valist, enum LOG_LEVELS);
+
+
+    printLog(func, line, lvl, cur_indx, values, tags, false);
+
+    /* clean memory reserved for valist */
+    va_end(valist);
+
+}
+
+void deprecatedLoggingMsgFunc(const char *func, int line, enum LOG_LEVELS lvl, const char *msg) {
+    if (lvl >= LOG_LEVEL) {
+        int curLogNum = getLogNum();
+        setColorPrint(lvl);
+        printf("[%s]: func:'%s' → line:%d (%d)%s\n%s", enumStrings[lvl], func, line, curLogNum, ANRM, msg);
+        setColorPrint(lvl);
+        printf(" (%d)%s\n", curLogNum, ANRM);
+    }
+}
+
+void deprecatedLoggingFunc(const char *func, int line, enum LOG_LEVELS lvl, int num, ...) {
     va_list valist;
 
     /* initialize valist for num number of arguments */
