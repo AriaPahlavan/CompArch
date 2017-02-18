@@ -10,3 +10,4 @@ CMakeLists.txt
 assemble
 simulate
 dumpsim
+*/*.obj
