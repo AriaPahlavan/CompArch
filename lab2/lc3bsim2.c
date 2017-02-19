@@ -420,6 +420,7 @@ int main(int argc, char *argv[]) {
 #define info EOL, __FUNCTION__, __LINE__, INFO
 #define warn EOL, __FUNCTION__, __LINE__, WARN
 #define error EOL, __FUNCTION__, __LINE__, ERROR
+#define incrmntdPC(pc) (pc+2)
 #define MEM(pc) Low16bits(((MEMORY[pc][1] << 2*nibble) + MEMORY[pc][0]))
 #define topByte(pc) (MEMORY[pc][1] << 2*nibble)
 #define btmByte(pc) (MEMORY[pc][0])
@@ -440,6 +441,9 @@ int main(int argc, char *argv[]) {
 #define SR1(pc) CURRENT_LATCHES.REGS[SR1_NUM(pc)]
 #define SR2(pc) CURRENT_LATCHES.REGS[SR2_NUM(pc)]
 #define imm5(pc) (MEM(pc) & 0x001F)
+#define PCoffset9(pc) (MEM(pc) & 0x01FF)
+#define PCoffset11(pc) (MEM(pc) & 0x07FF)
+#define getPCoffset9(pc) (incrmntdPC(pc) + LSHF(signExt(PCoffset9(pc), 9)))
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -544,7 +548,7 @@ enum OPCODES fetch(int opcode, int pc);
 
 void processNop();
 
-int16_t signExtnt(int16_t val, int sign_bit);
+int16_t signExt(int16_t val, int sign_bit);
 
 void setReg(int16_t reg, int16_t val);
 
@@ -552,7 +556,7 @@ void setReg(int16_t reg, int16_t val);
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
 
-    loggingNoHeader(S, "Sign ", UI16, signExtnt(0x21EC, 4), info);
+    loggingNoHeader(S, "Sign ", UI16, signExt(0x21EC, 4), info);
 
     /*  function: process_instruction
      *
@@ -573,18 +577,19 @@ void process_instruction() {
 
     switch (opcode) {
         case add:
-            if (bit(pc, 5) == 0)                                        /* if (bit[5] == 0) */
-                setReg(DR_NUM(pc), SR1(pc) + SR2(pc));                  /* DR = SR1 + SR2; */
+            if (bit(pc, 5) == 0)
+                setReg(DR_NUM(pc), SR1(pc) + SR2(pc));
             else
-                setReg(DR_NUM(pc), SR1(pc) + signExtnt(imm5(pc), 4));   /* DR = SR1 + SEXT(imm5); *//*
-                                                                        *//* setcc(); */
+                setReg(DR_NUM(pc), SR1(pc) + signExt(imm5(pc), 5));
+
         case and:
-            if (bit(pc, 5) == 0)                                        /* if (bit[5] == 0) */
-                setReg(DR_NUM(pc), SR1(pc) & SR2(pc));                  /* DR = SR1 AND SR2; */
+            if (bit(pc, 5) == 0)
+                setReg(DR_NUM(pc), SR1(pc) & SR2(pc));
             else
-                setReg(DR_NUM(pc), SR1(pc) & signExtnt(imm5(pc), 4));   /* DR = SR1 AND SEXT(imm5); */
-            /* setcc(); */
+                setReg(DR_NUM(pc), SR1(pc) & signExt(imm5(pc), 5));
+
         case ldb:
+
         case ldw:
         case not:
         case lshf:
@@ -599,46 +604,53 @@ void process_instruction() {
             deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
                                   I, argNum);*/
             break;
+            /*if ((n AND N) OR (z AND Z) OR (p AND P))
+            PC = PC + LSHF(SEXT(PCoffset9), 1);*/
         case brn:
-/*            if (argNum == 1) result = adjArgOne(4);*/
+            if (CURRENT_LATCHES.N == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case brp:
-/*            if (argNum == 1) result = adjArgOne(1);*/
+            if (CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case brnp:
-/*            if (argNum == 1) result = adjArgOne(5);*/
+            if (CURRENT_LATCHES.N == TRUE && CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case brz:
-/*            if (argNum == 1) result = adjArgOne(2);*/
+            if (CURRENT_LATCHES.Z == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case brnz:
-/*            if (argNum == 1) result = adjArgOne(6);*/
+            if (CURRENT_LATCHES.N == TRUE && CURRENT_LATCHES.Z == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case brzp:
-/*            if (argNum == 1) result = adjArgOne(3);*/
+            if (CURRENT_LATCHES.Z == TRUE && CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
             break;
         case br:
         case brnzp:
-/*            if (argNum == 1) result = adjArgOne(7);*/
+            next_pc = getPCoffset9(pc);
             break;
         case rti:
 /*            if (argNum == 1) writeToFile(outfile, "0x8000\n");*/
             break;
         case ret:
-/*            if (argNum == 1) writeToFile(outfile, "0xC1C0\n");*/
+            next_pc = CURRENT_LATCHES.REGS[r7];
             break;
         case jmp:
-        case jsrr:
-/*            if (argNum == 1) result = adjArgOne(000);
-            if (argNum == 2) {
-                result = reg = validateRegister(i->arg1, true);
-                result = adjArgTwo(result);
-                deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S,
-                                      " as arg #", I,
-                                      argNum);
-            }*/
+            next_pc = SR1(pc);
             break;
+        case jsrr:
         case jsr:
+            if (bit(pc, 11) == 0)
+                next_pc = SR1(pc);
+            else
+                next_pc = incrmntdPC(pc) + LSHF(signExt(PCoffset11(pc), 11));
+
+            NEXT_LATCHES.REGS[r7] = incrmntdPC(pc);
             break;
         case lea:
 /*            if (argNum == 1) {
@@ -648,8 +660,8 @@ void process_instruction() {
             break;
         case trap:
         case halt:
-            NEXT_LATCHES.REGS[r7] = pc;         /* R7 = PC; *//*
-            next_pc = MEM(LSHF(ZEXT8(pc)));     *//* PC = MEM[LSHF(ZEXT(trapvect8), 1)]; */
+            NEXT_LATCHES.REGS[r7] = pc;         /* R7 = PC; */
+            next_pc = MEM(LSHF(ZEXT8(pc)));     /* PC = MEM[LSHF(ZEXT(trapvect8), 1)]; */
             break;
         case nop:
             processNop();
@@ -671,19 +683,20 @@ void process_instruction() {
 }
 
 void setReg(int16_t reg, int16_t val) {
-    if (val > 0) NEXT_LATCHES.P = 1;
-    else NEXT_LATCHES.P = 0;
+    if (val > 0) NEXT_LATCHES.P = TRUE;
+    else NEXT_LATCHES.P = FALSE;
 
-    if (val == 0) NEXT_LATCHES.Z = 1;
-    else NEXT_LATCHES.Z = 0;
+    if (val == 0) NEXT_LATCHES.Z = TRUE;
+    else NEXT_LATCHES.Z = FALSE;
 
-    if (val < 0) NEXT_LATCHES.N = 1;
-    else NEXT_LATCHES.N = 0;
+    if (val < 0) NEXT_LATCHES.N = TRUE;
+    else NEXT_LATCHES.N = FALSE;
 
     NEXT_LATCHES.REGS[reg] = val;
 }
 
-int16_t signExtnt(int16_t val, int sign_bit) {
+int16_t signExt(int16_t val, int sign_bit) {
+    sign_bit--;
     loggingNoHeader(S, "Sign extenting: ", I, val, S, ", bit: ", Id, sign_bit, info);
 
     int16_t sign = bitVal(val, sign_bit);
