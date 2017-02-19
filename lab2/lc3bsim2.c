@@ -420,7 +420,7 @@ int main(int argc, char *argv[]) {
 #define info EOL, __FUNCTION__, __LINE__, INFO
 #define warn EOL, __FUNCTION__, __LINE__, WARN
 #define error EOL, __FUNCTION__, __LINE__, ERROR
-#define MEM(pc) ((MEMORY[pc][1] << 2*nibble) + MEMORY[pc][0])
+#define MEM(pc) Low16bits(((MEMORY[pc][1] << 2*nibble) + MEMORY[pc][0]))
 #define topByte(pc) (MEMORY[pc][1] << 2*nibble)
 #define btmByte(pc) (MEMORY[pc][0])
 #define nibble1(pc) ((MEMORY[pc][0]) & 0x000F)
@@ -431,6 +431,15 @@ int main(int argc, char *argv[]) {
 #define adjArgOne(val) val << 2*nibble+1
 #define LSHF(val) val << 1
 #define ZEXT8(pc) (MEM(pc) & 0x00FF)
+#define bit(pc, b) ((MEM(pc) >> b) & 0x0001)
+#define bitVal(val, b) ((val >> b) & 0x0001)
+#define DR_NUM(pc) ((MEM(pc) & 0x0E00) >> 9)
+#define SR1_NUM(pc) ((MEM(pc) & 0x01C0) >> 6)
+#define SR2_NUM(pc) ((MEM(pc) & 0x0007))
+#define DR(pc) CURRENT_LATCHES.REGS[DR_NUM(pc)]
+#define SR1(pc) CURRENT_LATCHES.REGS[SR1_NUM(pc)]
+#define SR2(pc) CURRENT_LATCHES.REGS[SR2_NUM(pc)]
+#define imm5(pc) (MEM(pc) & 0x001F)
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -535,8 +544,16 @@ enum OPCODES fetch(int opcode, int pc);
 
 void processNop();
 
+int16_t signExtnt(int16_t val, int sign_bit);
+
+void setReg(int16_t reg, int16_t val);
+
+
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
+
+    loggingNoHeader(S, "Sign ", UI16, signExtnt(0x21EC, 4), info);
+
     /*  function: process_instruction
      *
      *    Process one instruction at a time
@@ -556,12 +573,17 @@ void process_instruction() {
 
     switch (opcode) {
         case add:
-//            if (bit[5] == 0)
-//                DR = SR1 + SR2;
-//            else
-//                DR = SR1 + SEXT(imm5);
-//            setcc();
+            if (bit(pc, 5) == 0)                                        /* if (bit[5] == 0) */
+                setReg(DR_NUM(pc), SR1(pc) + SR2(pc));                  /* DR = SR1 + SR2; */
+            else
+                setReg(DR_NUM(pc), SR1(pc) + signExtnt(imm5(pc), 4));   /* DR = SR1 + SEXT(imm5); *//*
+                                                                        *//* setcc(); */
         case and:
+            if (bit(pc, 5) == 0)                                        /* if (bit[5] == 0) */
+                setReg(DR_NUM(pc), SR1(pc) & SR2(pc));                  /* DR = SR1 AND SR2; */
+            else
+                setReg(DR_NUM(pc), SR1(pc) & signExtnt(imm5(pc), 4));   /* DR = SR1 AND SEXT(imm5); */
+            /* setcc(); */
         case ldb:
         case ldw:
         case not:
@@ -571,81 +593,102 @@ void process_instruction() {
         case stb:
         case stw:
         case xor:
-//            result = reg = validateRegister(arg, true);
-//            if (argNum == 1) result = adjArgOne(result);
-//            else result = adjArgTwo(result);
-//            deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
-//                                  I, argNum);
+/*            result = reg = validateRegister(arg, true);
+            if (argNum == 1) result = adjArgOne(result);
+            else result = adjArgTwo(result);
+            deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
+                                  I, argNum);*/
             break;
         case brn:
-//            if (argNum == 1) result = adjArgOne(4);
+/*            if (argNum == 1) result = adjArgOne(4);*/
             break;
         case brp:
-//            if (argNum == 1) result = adjArgOne(1);
+/*            if (argNum == 1) result = adjArgOne(1);*/
             break;
         case brnp:
-//            if (argNum == 1) result = adjArgOne(5);
+/*            if (argNum == 1) result = adjArgOne(5);*/
             break;
         case brz:
-//            if (argNum == 1) result = adjArgOne(2);
+/*            if (argNum == 1) result = adjArgOne(2);*/
             break;
         case brnz:
-//            if (argNum == 1) result = adjArgOne(6);
+/*            if (argNum == 1) result = adjArgOne(6);*/
             break;
         case brzp:
-//            if (argNum == 1) result = adjArgOne(3);
+/*            if (argNum == 1) result = adjArgOne(3);*/
             break;
         case br:
         case brnzp:
-//            if (argNum == 1) result = adjArgOne(7);
+/*            if (argNum == 1) result = adjArgOne(7);*/
             break;
         case rti:
-//            if (argNum == 1) writeToFile(outfile, "0x8000\n");
+/*            if (argNum == 1) writeToFile(outfile, "0x8000\n");*/
             break;
         case ret:
-//            if (argNum == 1) writeToFile(outfile, "0xC1C0\n");
+/*            if (argNum == 1) writeToFile(outfile, "0xC1C0\n");*/
             break;
         case jmp:
         case jsrr:
-//            if (argNum == 1) result = adjArgOne(000);
-//            if (argNum == 2) {
-//                result = reg = validateRegister(i->arg1, true);
-//                result = adjArgTwo(result);
-//                deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S,
-//                                      " as arg #", I,
-//                                      argNum);
-//            }
+/*            if (argNum == 1) result = adjArgOne(000);
+            if (argNum == 2) {
+                result = reg = validateRegister(i->arg1, true);
+                result = adjArgTwo(result);
+                deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S,
+                                      " as arg #", I,
+                                      argNum);
+            }*/
             break;
         case jsr:
             break;
         case lea:
-//            if (argNum == 1) {
-//                result = reg = validateRegister(arg, true);
-//                result = adjArgOne(result);
-//            }
+/*            if (argNum == 1) {
+                result = reg = validateRegister(arg, true);
+                result = adjArgOne(result);
+            }*/
             break;
         case trap:
         case halt:
-            NEXT_LATCHES.REGS[r7] = pc;         // R7 = PC;
-            next_pc = MEM(LSHF(ZEXT8(pc)));     // PC = MEM[LSHF(ZEXT(trapvect8), 1)];
+            NEXT_LATCHES.REGS[r7] = pc;         /* R7 = PC; *//*
+            next_pc = MEM(LSHF(ZEXT8(pc)));     *//* PC = MEM[LSHF(ZEXT(trapvect8), 1)]; */
             break;
         case nop:
             processNop();
             break;
         case fill:
-//            if (argNum == 1) {
-//                uint16_t val = toNum(i->arg1);
-//
-//                if (opcode == fill) result = outputFill(i->arg1);
-//            }
-//            deprecatedLoggingFunc(deprecated_debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
+/*            if (argNum == 1) {
+                uint16_t val = toNum(i->arg1);
+
+                if (opcode == fill) result = outputFill(i->arg1);
+            }
+            deprecatedLoggingFunc(deprecated_debug, 2, S, "Fill current address with ", I, toNum(i->arg1));*/
             break;
     }
 
 
     NEXT_LATCHES.PC = next_pc;
 
-    loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);
+    /*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*/
+}
+
+void setReg(int16_t reg, int16_t val) {
+    if (val > 0) NEXT_LATCHES.P = 1;
+    else NEXT_LATCHES.P = 0;
+
+    if (val == 0) NEXT_LATCHES.Z = 1;
+    else NEXT_LATCHES.Z = 0;
+
+    if (val < 0) NEXT_LATCHES.N = 1;
+    else NEXT_LATCHES.N = 0;
+
+    NEXT_LATCHES.REGS[reg] = val;
+}
+
+int16_t signExtnt(int16_t val, int sign_bit) {
+    loggingNoHeader(S, "Sign extenting: ", I, val, S, ", bit: ", Id, sign_bit, info);
+
+    int16_t sign = bitVal(val, sign_bit);
+    return sign == 1 ? ((0xFFFF << (sign_bit + 1)) | val)
+                     : ((0xFFFF >> (16 - (sign_bit + 1))) & val);
 }
 
 void processNop() {
