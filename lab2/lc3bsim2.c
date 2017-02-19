@@ -68,7 +68,7 @@ int RUN_BIT;    /* run bit */
 
 typedef struct System_Latches_Struct {
 
-    int PC,        /* program counter */
+    int PC,           /* program counter */
             N,        /* n condition bit */
             Z,        /* z condition bit */
             P;        /* p condition bit */
@@ -414,10 +414,23 @@ int main(int argc, char *argv[]) {
 #define EMPTY_VAL 0
 #define LOG_LEVEL DEBUG
 #define MAX_LOG_DEF_ARGS 4
+#define MAX_NUM_OPCODES 29
+#define nibble 4
 #define debug EOL, __FUNCTION__, __LINE__, DEBUG
 #define info EOL, __FUNCTION__, __LINE__, INFO
 #define warn EOL, __FUNCTION__, __LINE__, WARN
 #define error EOL, __FUNCTION__, __LINE__, ERROR
+#define MEM(pc) ((MEMORY[pc][1] << 2*nibble) + MEMORY[pc][0])
+#define topByte(pc) (MEMORY[pc][1] << 2*nibble)
+#define btmByte(pc) (MEMORY[pc][0])
+#define nibble1(pc) ((MEMORY[pc][0]) & 0x000F)
+#define nibble2(pc) ((MEMORY[pc][0]) & 0x00F0)
+#define nibble3(pc) ((MEMORY[pc][1] << 2*nibble) & 0x0F00)
+#define nibble4(pc) ((MEMORY[pc][1] << 2*nibble) & 0xF000)
+#define arg1(pc) (MEM(pc) & 0x0E00)
+#define adjArgOne(val) val << 2*nibble+1
+#define LSHF(val) val << 1
+#define ZEXT8(pc) (MEM(pc) & 0x00FF)
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -430,6 +443,8 @@ int main(int argc, char *argv[]) {
 
 /**-------------------------------- Structures & Enums --------------------------------*/
 enum DATA_TYPE {
+    ADDR,
+    STAT,
     PTR,
     CHAR,
     INT_8,
@@ -478,10 +493,29 @@ enum LOG_LEVELS {
     ERROR,
     NONE
 };
+enum OPCODES {
+    add, and, br, brn, brp, brnp, brz, brnz, brzp, brnzp, jmp, ret, jsr, jsrr, ldb,
+    ldw, lea, not, rti, lshf, rshfl, rshfa, stb, stw, trap, xor, halt, nop, fill
+};
+enum REGISTERS {
+    r0, r1, r2, r3, r4, r5, r6, r7
+};
 
 
 /**--------------------------------- Global Variables ---------------------------------*/
 const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
+
+const static char *lowerOpcodes[] = {"add", "and", "br", "brn", "brp", "brnp", "brz", "brnz", "brzp",
+                                     "brnzp", "jmp", "ret", "jsr", "jsrr", "ldb", "ldw", "lea", "not",
+                                     "rti", "lshf", "rshfl", "rshfa", "stb", "stw", "trap", "xor", "halt", "nop",
+                                     ".fill"};
+
+const static int opcodes[] = {1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 4, 4, 2,
+                              6, 14, 9, 8, 13, 13, 13, 3, 7, 15, 9, 15, 0, 10};
+
+const enum OPCODES opcodeEnum[] = {add, and, br, brn, brp, brnp, brz, brnz, brzp, brnzp,
+                                   jmp, ret, jsr, jsrr, ldb, ldw, lea, not, rti, lshf,
+                                   rshfl, rshfa, stb, stw, trap, xor, halt, nop, fill};
 
 
 /**-------------------------------- Function Declarations -----------------------------*/
@@ -497,6 +531,9 @@ void print(int num, ...);
 
 void println(int num, ...);
 
+enum OPCODES fetch(int opcode, int pc);
+
+void processNop();
 
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
@@ -508,9 +545,146 @@ void process_instruction() {
      *       -Execute
      *       -Update NEXT_LATCHES
      */
-    loggingMsg("Initializing the simulation of LC-3b...", info);
+    static int instruction_num = 0;
+    int pc = CURRENT_LATCHES.PC / 2, next_pc = CURRENT_LATCHES.PC + 2;
+    logging(S, "Simulating instruction #", Id, instruction_num++, info);
+    loggingNoHeader(STAT, &CURRENT_LATCHES, N,
+                    S, "current instruction: ", ADDR, pc, debug);
+
+    enum OPCODES opcode = fetch(nibble4(pc), pc);
+
+
+    switch (opcode) {
+        case add:
+//            if (bit[5] == 0)
+//                DR = SR1 + SR2;
+//            else
+//                DR = SR1 + SEXT(imm5);
+//            setcc();
+        case and:
+        case ldb:
+        case ldw:
+        case not:
+        case lshf:
+        case rshfl:
+        case rshfa:
+        case stb:
+        case stw:
+        case xor:
+//            result = reg = validateRegister(arg, true);
+//            if (argNum == 1) result = adjArgOne(result);
+//            else result = adjArgTwo(result);
+//            deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
+//                                  I, argNum);
+            break;
+        case brn:
+//            if (argNum == 1) result = adjArgOne(4);
+            break;
+        case brp:
+//            if (argNum == 1) result = adjArgOne(1);
+            break;
+        case brnp:
+//            if (argNum == 1) result = adjArgOne(5);
+            break;
+        case brz:
+//            if (argNum == 1) result = adjArgOne(2);
+            break;
+        case brnz:
+//            if (argNum == 1) result = adjArgOne(6);
+            break;
+        case brzp:
+//            if (argNum == 1) result = adjArgOne(3);
+            break;
+        case br:
+        case brnzp:
+//            if (argNum == 1) result = adjArgOne(7);
+            break;
+        case rti:
+//            if (argNum == 1) writeToFile(outfile, "0x8000\n");
+            break;
+        case ret:
+//            if (argNum == 1) writeToFile(outfile, "0xC1C0\n");
+            break;
+        case jmp:
+        case jsrr:
+//            if (argNum == 1) result = adjArgOne(000);
+//            if (argNum == 2) {
+//                result = reg = validateRegister(i->arg1, true);
+//                result = adjArgTwo(result);
+//                deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S,
+//                                      " as arg #", I,
+//                                      argNum);
+//            }
+            break;
+        case jsr:
+            break;
+        case lea:
+//            if (argNum == 1) {
+//                result = reg = validateRegister(arg, true);
+//                result = adjArgOne(result);
+//            }
+            break;
+        case trap:
+        case halt:
+            NEXT_LATCHES.REGS[r7] = pc;         // R7 = PC;
+            next_pc = MEM(LSHF(ZEXT8(pc)));     // PC = MEM[LSHF(ZEXT(trapvect8), 1)];
+            break;
+        case nop:
+            processNop();
+            break;
+        case fill:
+//            if (argNum == 1) {
+//                uint16_t val = toNum(i->arg1);
+//
+//                if (opcode == fill) result = outputFill(i->arg1);
+//            }
+//            deprecatedLoggingFunc(deprecated_debug, 2, S, "Fill current address with ", I, toNum(i->arg1));
+            break;
+    }
+
+
+    NEXT_LATCHES.PC = next_pc;
 
     loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);
+}
+
+void processNop() {
+    int k;
+    NEXT_LATCHES.N = CURRENT_LATCHES.N;
+    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
+    NEXT_LATCHES.P = CURRENT_LATCHES.P;
+    for (k = 0; k < LC_3b_REGS; k++)
+        NEXT_LATCHES.REGS[k] = CURRENT_LATCHES.REGS[k];
+}
+
+enum OPCODES fetch(int opcode, int pc) {
+    loggingNoHeader(S, "finding opcode for ", Ix, opcode, debug);
+
+    int j;
+    enum OPCODES result = fill;
+
+    for (j = 0; j < MAX_NUM_OPCODES; ++j)
+        if (opcode == opcodes[j] << 3 * nibble)
+            result = opcodeEnum[j];
+    if (opcode == 0) {
+        if (adjArgOne(4) == arg1(pc)) result = brn;
+        else if (adjArgOne(1) == arg1(pc)) result = brp;
+        else if (adjArgOne(5) == arg1(pc)) result = brnp;
+        else if (adjArgOne(2) == arg1(pc)) result = brz;
+        else if (adjArgOne(6) == arg1(pc)) result = brnz;
+        else if (adjArgOne(3) == arg1(pc)) result = brzp;
+        else if (adjArgOne(7) == arg1(pc)) result = br;
+        else if (MEM(pc) == opcodes[nop]) result = nop;
+        else {
+            loggingMsg("Invalid instruction.", error);
+            exit(4);
+        }
+    }
+
+    loggingNoHeader(S, "Value ", Ix, opcode, S, " is for opcode ",
+                    S, lowerOpcodes[result], info);
+
+    return result;
 }
 
 
@@ -570,6 +744,20 @@ void outputDouble(double value) {
 
 void output(void *V, enum DATA_TYPE Type) {
     switch (Type) {
+        case ADDR:
+            printf("0x%X", MEM((int) V));
+            break;
+        case STAT:
+            if (TRUE) {
+                int k;
+                printf("PC: 0x%.4X\n", CURRENT_LATCHES.PC);
+                printf("CCs: N = %d  Z = %d  P = %d\n", CURRENT_LATCHES.N, CURRENT_LATCHES.Z, CURRENT_LATCHES.P);
+                for (k = 0; k < LC_3b_REGS; k++) {
+                    printf("R%d: 0x%.4X  ", k, CURRENT_LATCHES.REGS[k]);
+                    if (k == 3) printf("\n");
+                }
+            }
+            break;
         case P:
         case PTR:
             printf("%p", (int *) V);
