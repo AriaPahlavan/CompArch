@@ -427,8 +427,8 @@ int main(int argc, char *argv[]) {
 #define MEM_BYTE(addr) getMemByteData(addr/2)
 #define bit(pc, b) ((MEM(pc) >> b) & 0x0001)
 #define bitVal(val, b) ((val >> b) & 0x0001)
-#define getSignExtend(val, sign_bit) bitVal(val, sign_bit) == 1 ? ((0xFFFF << (sign_bit + 1)) | val) \
-                                                                : ((0xFFFF >> (16 - (sign_bit + 1))) & val)
+#define getSignExtend(val, sign_bit) Low16bits(bitVal(val, sign_bit) == 1 ? ((0xFFFF << (sign_bit + 1)) | val) \
+                                                                : ((0xFFFF >> (16 - (sign_bit + 1))) & val))
 #define SEXT(val, num_bits) getSignExtend(val, num_bits-1)
 #define topByte(pc) (MEMORY[pc][1] << 2*nibble)
 #define btmByte(pc) (MEMORY[pc][0])
@@ -438,20 +438,26 @@ int main(int argc, char *argv[]) {
 #define nibble4(pc) ((MEMORY[pc][1] << 2*nibble) & 0xF000)
 #define arg1(pc) (MEM(pc) & 0x0E00)
 #define adjArgOne(val) val << 2*nibble+1
-#define LSHF(val) val << 1
+#define SEXT_VAL(val, n) Low16bits((0xFFFF << (16 - n)) | val)
+#define ZEXT_VAL(val, n) Low16bits((0xFFFF >> n) & val)
+#define LSHF(val) Low16bits(val << 1)
+#define LSHFN(val, n) Low16bits(val << n)
+#define RSHFN(val, n, b) b == 0 ? ZEXT_VAL(val >> n, n) : SEXT_VAL(val >> n, n)
 #define ZEXT8(pc) (MEM(pc) & 0x00FF)
-#define DR_NUM(pc) ((MEM(pc) & 0x0E00) >> 9)
-#define SR1_NUM(pc) ((MEM(pc) & 0x01C0) >> 6)
-#define SR2_NUM(pc) ((MEM(pc) & 0x0007))
-#define DR(pc) CURRENT_LATCHES.REGS[DR_NUM(pc)]
-#define SR1(pc) CURRENT_LATCHES.REGS[SR1_NUM(pc)]
-#define SR2(pc) CURRENT_LATCHES.REGS[SR2_NUM(pc)]
+#define DR_NUM(pc) (((MEM(pc) & 0x0E00) >> 9) & 0x0007)
+#define SR1_NUM(pc) (((MEM(pc) & 0x01C0) >> 6) & 0x0007)
+#define SR2_NUM(pc) (MEM(pc) & 0x0007)
+#define DR(pc) Low16bits(CURRENT_LATCHES.REGS[DR_NUM(pc)])
+#define SR1(pc) Low16bits(CURRENT_LATCHES.REGS[SR1_NUM(pc)])
+#define SR2(pc) Low16bits(CURRENT_LATCHES.REGS[SR2_NUM(pc)])
+#define amount4(pc) (MEM(pc) & 0x000F)
 #define imm5(pc) (MEM(pc) & 0x001F)
 #define boffset6(pc) (MEM(pc) & 0x003F)
 #define offset6(pc) (MEM(pc) & 0x003F)
 #define PCoffset9(pc) (MEM(pc) & 0x01FF)
 #define PCoffset11(pc) (MEM(pc) & 0x07FF)
 #define getPCoffset9(pc) (incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)))
+#define NOT(val) ~val
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -559,11 +565,21 @@ void processNop();
 void setRegWithCC(int16_t reg, int16_t val);
 
 
+void storeByteValue(uint16_t addr, int16_t val);
+
+void storeWordVal(uint16_t addr, int16_t val);
+
+int decodeAndExecute(int pc, enum OPCODES opcode);
+
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
 
-    /*loggingNoHeader(S, "Sign ", UI16, SEXT(0x21EC, 4), info);*/
-
+    /*    uint16_t i = 0xE15F;
+    uint16_t j = 0x215F;
+    logging(S, "value is: ", I, RSHFN(i, 0x0003, bitVal(i, 15)), info);
+    logging(S, "value is: ", I, RSHFN(j, 5, bitVal(j, 15)), info);
+    logging(S, "value is: ", I, LSHFN(j, 5), info);
+    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);*/
     /*  function: process_instruction
      *
      *    Process one instruction at a time
@@ -573,49 +589,70 @@ void process_instruction() {
      *       -Update NEXT_LATCHES
      */
     static int instruction_num = 0;
-    int pc = CURRENT_LATCHES.PC, next_pc = CURRENT_LATCHES.PC + 2;
     logging(S, "Simulating instruction #", Id, instruction_num++, info);
+
+    int pc = CURRENT_LATCHES.PC, next_pc;
     loggingNoHeader(STAT, &CURRENT_LATCHES, N,
                     S, "current instruction: ", ADDR, pc, debug);
 
     enum OPCODES opcode = fetch(nibble4(pc), pc);
 
 
+    next_pc = decodeAndExecute(pc, opcode);
+
+
+    NEXT_LATCHES.PC = next_pc;
+
+    /*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*/
+}
+
+int decodeAndExecute(int pc, enum OPCODES opcode) {
+    int next_pc = pc + 2;
     int16_t val;
+
     switch (opcode) {
         case add:
             if (bit(pc, 5) == 0)
                 setRegWithCC(DR_NUM(pc), SR1(pc) + SR2(pc));
             else
                 setRegWithCC(DR_NUM(pc), SR1(pc) + SEXT(imm5(pc), 5));
-
+            break;
         case and:
             if (bit(pc, 5) == 0)
                 setRegWithCC(DR_NUM(pc), SR1(pc) & SR2(pc));
             else
                 setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
-
+            break;
         case ldb:
             val = MEM_BYTE(SR1(pc) + SEXT(boffset6(pc), 6));
             setRegWithCC(DR_NUM(pc), SEXT(val, 9));
             break;
         case ldw:
             setRegWithCC(DR_NUM(pc), MEM(SR1(pc) + LSHF(SEXT(offset6(pc), 6))));
-        case not:
+            break;
         case lshf:
         case rshfl:
         case rshfa:
-        case stb:
-        case stw:
-        case xor:
-/*            result = reg = validateRegister(arg, true);
-            if (argNum == 1) result = adjArgOne(result);
-            else result = adjArgTwo(result);
-            deprecatedLoggingFunc(deprecated_debug, 7, S, arg, S, " >> R", I, reg, S, ": ", I, result, S, " as arg #",
-                                  I, argNum);*/
+            if (bit(pc, 4) == 0)
+                setRegWithCC(DR_NUM(pc), LSHFN(SR1(pc), amount4(pc)));
+            else if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), 0));
+            else
+                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bitVal(SR1(pc), 15)));
             break;
-            /*if ((n AND N) OR (z AND Z) OR (p AND P))
-            PC = PC + LSHF(SEXT(PCoffset9), 1);*/
+        case stb:
+            storeByteValue(SR1(pc) + SEXT(boffset6(pc), 6), (DR(pc) & 0x00FF));
+            break;
+        case stw:
+            storeWordVal(SR1(pc)+ LSHF(SEXT(offset6(pc), 6)), DR(pc));
+            break;
+        case not:
+        case xor:
+            if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SR2(pc)));
+            else
+                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SEXT(imm5(pc), 5)));
+            break;
         case brn:
             if (CURRENT_LATCHES.N == TRUE)
                 next_pc = getPCoffset9(pc);
@@ -645,7 +682,7 @@ void process_instruction() {
             next_pc = getPCoffset9(pc);
             break;
         case rti:
-/*            if (argNum == 1) writeToFile(outfile, "0x8000\n");*/
+            /* Don't care! */
             break;
         case ret:
             next_pc = CURRENT_LATCHES.REGS[r7];
@@ -668,26 +705,28 @@ void process_instruction() {
             break;
         case trap:
         case halt:
-            NEXT_LATCHES.REGS[r7] = pc;         /* R7 = PC; */
-            next_pc = MEM(LSHF(ZEXT8(pc)));     /* PC = MEM[LSHF(ZEXT(trapvect8), 1)]; */
+            NEXT_LATCHES.REGS[r7] = pc;
+            next_pc = MEM(LSHF(ZEXT8(pc)));
             break;
         case nop:
             processNop();
             break;
-        case fill:
-/*            if (argNum == 1) {
-                uint16_t val = toNum(i->arg1);
-
-                if (opcode == fill) result = outputFill(i->arg1);
-            }
-            deprecatedLoggingFunc(deprecated_debug, 2, S, "Fill current address with ", I, toNum(i->arg1));*/
+        default:
+            /* Don't care!*/
             break;
     }
+    return next_pc;
+}
 
+void storeWordVal(uint16_t addr, int16_t val) {
+    int *mem = MEMORY[addr/2];
+    mem[0] = Low16bits(val & 0x00FF);
+    mem[1] = Low16bits(val & 0xFF00);
+}
 
-    NEXT_LATCHES.PC = next_pc;
-
-    /*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*/
+void storeByteValue(uint16_t addr, int16_t val) {
+    int* mem = MEMORY[addr/2];
+    (addr % 2 == 0) ? mem[0] = val : mem[1] = val;
 }
 
 void setRegWithCC(int16_t reg, int16_t val) {
