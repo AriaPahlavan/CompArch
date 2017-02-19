@@ -421,7 +421,15 @@ int main(int argc, char *argv[]) {
 #define warn EOL, __FUNCTION__, __LINE__, WARN
 #define error EOL, __FUNCTION__, __LINE__, ERROR
 #define incrmntdPC(pc) (pc+2)
-#define MEM(pc) Low16bits(((MEMORY[pc][1] << 2*nibble) + MEMORY[pc][0]))
+#define getMemData(mem_index) Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
+#define MEM(addr) getMemData(addr/2)
+#define getMemByteData(mem_index) Low16bits(MEMORY[mem_index][0])
+#define MEM_BYTE(addr) getMemByteData(addr/2)
+#define bit(pc, b) ((MEM(pc) >> b) & 0x0001)
+#define bitVal(val, b) ((val >> b) & 0x0001)
+#define getSignExtend(val, sign_bit) bitVal(val, sign_bit) == 1 ? ((0xFFFF << (sign_bit + 1)) | val) \
+                                                                : ((0xFFFF >> (16 - (sign_bit + 1))) & val)
+#define SEXT(val, num_bits) getSignExtend(val, num_bits-1)
 #define topByte(pc) (MEMORY[pc][1] << 2*nibble)
 #define btmByte(pc) (MEMORY[pc][0])
 #define nibble1(pc) ((MEMORY[pc][0]) & 0x000F)
@@ -432,8 +440,6 @@ int main(int argc, char *argv[]) {
 #define adjArgOne(val) val << 2*nibble+1
 #define LSHF(val) val << 1
 #define ZEXT8(pc) (MEM(pc) & 0x00FF)
-#define bit(pc, b) ((MEM(pc) >> b) & 0x0001)
-#define bitVal(val, b) ((val >> b) & 0x0001)
 #define DR_NUM(pc) ((MEM(pc) & 0x0E00) >> 9)
 #define SR1_NUM(pc) ((MEM(pc) & 0x01C0) >> 6)
 #define SR2_NUM(pc) ((MEM(pc) & 0x0007))
@@ -441,9 +447,11 @@ int main(int argc, char *argv[]) {
 #define SR1(pc) CURRENT_LATCHES.REGS[SR1_NUM(pc)]
 #define SR2(pc) CURRENT_LATCHES.REGS[SR2_NUM(pc)]
 #define imm5(pc) (MEM(pc) & 0x001F)
+#define boffset6(pc) (MEM(pc) & 0x003F)
+#define offset6(pc) (MEM(pc) & 0x003F)
 #define PCoffset9(pc) (MEM(pc) & 0x01FF)
 #define PCoffset11(pc) (MEM(pc) & 0x07FF)
-#define getPCoffset9(pc) (incrmntdPC(pc) + LSHF(signExt(PCoffset9(pc), 9)))
+#define getPCoffset9(pc) (incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)))
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -548,15 +556,13 @@ enum OPCODES fetch(int opcode, int pc);
 
 void processNop();
 
-int16_t signExt(int16_t val, int sign_bit);
-
-void setReg(int16_t reg, int16_t val);
+void setRegWithCC(int16_t reg, int16_t val);
 
 
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
 
-    loggingNoHeader(S, "Sign ", UI16, signExt(0x21EC, 4), info);
+    /*loggingNoHeader(S, "Sign ", UI16, SEXT(0x21EC, 4), info);*/
 
     /*  function: process_instruction
      *
@@ -567,7 +573,7 @@ void process_instruction() {
      *       -Update NEXT_LATCHES
      */
     static int instruction_num = 0;
-    int pc = CURRENT_LATCHES.PC / 2, next_pc = CURRENT_LATCHES.PC + 2;
+    int pc = CURRENT_LATCHES.PC, next_pc = CURRENT_LATCHES.PC + 2;
     logging(S, "Simulating instruction #", Id, instruction_num++, info);
     loggingNoHeader(STAT, &CURRENT_LATCHES, N,
                     S, "current instruction: ", ADDR, pc, debug);
@@ -575,22 +581,26 @@ void process_instruction() {
     enum OPCODES opcode = fetch(nibble4(pc), pc);
 
 
+    int16_t val;
     switch (opcode) {
         case add:
             if (bit(pc, 5) == 0)
-                setReg(DR_NUM(pc), SR1(pc) + SR2(pc));
+                setRegWithCC(DR_NUM(pc), SR1(pc) + SR2(pc));
             else
-                setReg(DR_NUM(pc), SR1(pc) + signExt(imm5(pc), 5));
+                setRegWithCC(DR_NUM(pc), SR1(pc) + SEXT(imm5(pc), 5));
 
         case and:
             if (bit(pc, 5) == 0)
-                setReg(DR_NUM(pc), SR1(pc) & SR2(pc));
+                setRegWithCC(DR_NUM(pc), SR1(pc) & SR2(pc));
             else
-                setReg(DR_NUM(pc), SR1(pc) & signExt(imm5(pc), 5));
+                setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
 
         case ldb:
-
+            val = MEM_BYTE(SR1(pc) + SEXT(boffset6(pc), 6));
+            setRegWithCC(DR_NUM(pc), SEXT(val, 9));
+            break;
         case ldw:
+            setRegWithCC(DR_NUM(pc), MEM(SR1(pc) + LSHF(SEXT(offset6(pc), 6))));
         case not:
         case lshf:
         case rshfl:
@@ -648,15 +658,13 @@ void process_instruction() {
             if (bit(pc, 11) == 0)
                 next_pc = SR1(pc);
             else
-                next_pc = incrmntdPC(pc) + LSHF(signExt(PCoffset11(pc), 11));
+                next_pc = incrmntdPC(pc) + LSHF(SEXT(PCoffset11(pc), 11));
 
             NEXT_LATCHES.REGS[r7] = incrmntdPC(pc);
             break;
         case lea:
-/*            if (argNum == 1) {
-                result = reg = validateRegister(arg, true);
-                result = adjArgOne(result);
-            }*/
+            CURRENT_LATCHES.REGS[DR_NUM(pc)] =
+                    incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9));
             break;
         case trap:
         case halt:
@@ -682,7 +690,7 @@ void process_instruction() {
     /*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*/
 }
 
-void setReg(int16_t reg, int16_t val) {
+void setRegWithCC(int16_t reg, int16_t val) {
     if (val > 0) NEXT_LATCHES.P = TRUE;
     else NEXT_LATCHES.P = FALSE;
 
@@ -693,15 +701,6 @@ void setReg(int16_t reg, int16_t val) {
     else NEXT_LATCHES.N = FALSE;
 
     NEXT_LATCHES.REGS[reg] = val;
-}
-
-int16_t signExt(int16_t val, int sign_bit) {
-    sign_bit--;
-    loggingNoHeader(S, "Sign extenting: ", I, val, S, ", bit: ", Id, sign_bit, info);
-
-    int16_t sign = bitVal(val, sign_bit);
-    return sign == 1 ? ((0xFFFF << (sign_bit + 1)) | val)
-                     : ((0xFFFF >> (16 - (sign_bit + 1))) & val);
 }
 
 void processNop() {
