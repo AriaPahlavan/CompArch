@@ -423,19 +423,19 @@ int main(int argc, char *argv[]) {
 #define incrmntdPC(pc) (pc+2)
 #define getMemData(mem_index) Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
 #define MEM(addr) getMemData(addr/2)
-#define getMemByteData(mem_index) Low16bits(MEMORY[mem_index][0])
-#define MEM_BYTE(addr) getMemByteData(addr/2)
 #define bit(pc, b) ((MEM(pc) >> b) & 0x0001)
 #define bitVal(val, b) ((val >> b) & 0x0001)
 #define getSignExtend(val, sign_bit) Low16bits(bitVal(val, sign_bit) == 1 ? ((0xFFFF << (sign_bit + 1)) | val) \
                                                                 : ((0xFFFF >> (16 - (sign_bit + 1))) & val))
 #define SEXT(val, num_bits) getSignExtend(val, num_bits-1)
-#define topByte(pc) (MEMORY[pc][1] << 2*nibble)
-#define btmByte(pc) (MEMORY[pc][0])
-#define nibble1(pc) ((MEMORY[pc][0]) & 0x000F)
-#define nibble2(pc) ((MEMORY[pc][0]) & 0x00F0)
-#define nibble3(pc) ((MEMORY[pc][1] << 2*nibble) & 0x0F00)
-#define nibble4(pc) ((MEMORY[pc][1] << 2*nibble) & 0xF000)
+#define mPtr(pc) MEMORY[pc/2]
+#define topByte(pc) (mPtr(pc)[1] << 2*nibble)
+#define btmByte(pc) (mPtr(pc)[0])
+#define nibble1(pc) ((mPtr(pc)[0]) & 0x000F)
+#define nibble2(pc) ((mPtr(pc)[0]) & 0x00F0)
+#define nibble3(pc) ((mPtr(pc)[1] << 2*nibble) & 0x0F00)
+
+#define nibble4(pc) ((mPtr(pc)[1] << 2*nibble) & 0xF000)
 #define arg1(pc) (MEM(pc) & 0x0E00)
 #define adjArgOne(val) val << 2*nibble+1
 #define SEXT_VAL(val, n) Low16bits((0xFFFF << (16 - n)) | val)
@@ -456,8 +456,7 @@ int main(int argc, char *argv[]) {
 #define offset6(pc) (MEM(pc) & 0x003F)
 #define PCoffset9(pc) (MEM(pc) & 0x01FF)
 #define PCoffset11(pc) (MEM(pc) & 0x07FF)
-#define getPCoffset9(pc) (incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)))
-#define NOT(val) ~val
+#define getPCoffset9(pc) Low16bits((incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9))))
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -571,6 +570,8 @@ void storeWordVal(uint16_t addr, int16_t val);
 
 int decodeAndExecute(int pc, enum OPCODES opcode);
 
+int16_t MEM_BYTE(uint16_t addr);
+
 /**-------------------------------- Function Definitions ------------------------------*/
 void process_instruction() {
 
@@ -624,11 +625,30 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
                 setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
             break;
         case ldb:
-            val = MEM_BYTE(SR1(pc) + SEXT(boffset6(pc), 6));
+            val = SR1(pc) + SEXT(boffset6(pc), 6);
+            loggingNoHeader(S, AMAG"<LB> "ANRM"Loading ",
+                            I, SEXT(MEM_BYTE(val), 9),
+                            S, " into register R", I, DR_NUM(pc),
+                            N, S, "offset: ", I, boffset6(pc),
+                            N, S, "SEXT: ", I, SEXT(boffset6(pc), 6),
+                            N, S, "SR1: ", I, SR1(pc),
+                            N, S, "MEM_BYTE: ", I, MEM_BYTE(val),
+                            N, S, "SR + offset: ", I, SR1(pc) + SEXT(boffset6(pc), 6),
+                            N, S, "arg: ", I, val, info);
+            val = MEM_BYTE(val);
             setRegWithCC(DR_NUM(pc), SEXT(val, 9));
             break;
         case ldw:
-            setRegWithCC(DR_NUM(pc), MEM(SR1(pc) + LSHF(SEXT(offset6(pc), 6))));
+            val = SR1(pc) + LSHF(SEXT(offset6(pc), 6));
+            loggingNoHeader(S, AMAG"<LW> "ANRM"Loading ",
+                            I, MEM(val),
+                            S, " into register R", I, DR_NUM(pc),
+                            N, S, "offset: ", I, offset6(pc),
+                            N, S, "SEXT: ", I, SEXT(offset6(pc), 6),
+                            N, S, "LSHF: ", I, LSHF(SEXT(offset6(pc), 6)),
+                            N, S, "arg: ", I, val,
+                            N, S, "SR1: ", I, SR1(pc), info);
+            setRegWithCC(DR_NUM(pc), MEM(val));
             break;
         case lshf:
         case rshfl:
@@ -644,7 +664,7 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             storeByteValue(SR1(pc) + SEXT(boffset6(pc), 6), (DR(pc) & 0x00FF));
             break;
         case stw:
-            storeWordVal(SR1(pc)+ LSHF(SEXT(offset6(pc), 6)), DR(pc));
+            storeWordVal(SR1(pc) + LSHF(SEXT(offset6(pc), 6)), DR(pc));
             break;
         case not:
         case xor:
@@ -685,8 +705,6 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             /* Don't care! */
             break;
         case ret:
-            next_pc = CURRENT_LATCHES.REGS[r7];
-            break;
         case jmp:
             next_pc = SR1(pc);
             break;
@@ -700,7 +718,7 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             NEXT_LATCHES.REGS[r7] = incrmntdPC(pc);
             break;
         case lea:
-            CURRENT_LATCHES.REGS[DR_NUM(pc)] =
+            NEXT_LATCHES.REGS[DR_NUM(pc)] =
                     incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9));
             break;
         case trap:
@@ -718,15 +736,35 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
     return next_pc;
 }
 
+int16_t MEM_BYTE(uint16_t addr) {
+    int16_t result;
+
+    if (addr % 2 == 0) {
+        result = (0x00FF & MEMORY[addr/2][0]);
+
+    } else {
+        addr -= 1;
+        result = (0x00FF & MEMORY[addr/2][1]);
+    }
+
+    return result;
+}
+
 void storeWordVal(uint16_t addr, int16_t val) {
-    int *mem = MEMORY[addr/2];
+    loggingNoHeader(S, "<SW> Storing ", I, val, S, " into address ", I, addr, info);
+    int *mem = MEMORY[addr / 2];
     mem[0] = Low16bits(val & 0x00FF);
     mem[1] = Low16bits(val & 0xFF00);
 }
 
 void storeByteValue(uint16_t addr, int16_t val) {
-    int* mem = MEMORY[addr/2];
-    (addr % 2 == 0) ? mem[0] = val : mem[1] = val;
+    loggingNoHeader(S, "<SB> Storing ", I, val, S, " into address ", I, addr, info);
+    int *mem = MEMORY[addr / 2];
+    if (addr % 2 == 0) {
+        mem[0] = val;
+    } else {
+        mem[1] = val;
+    }
 }
 
 void setRegWithCC(int16_t reg, int16_t val) {
