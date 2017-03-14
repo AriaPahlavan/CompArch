@@ -11,3 +11,5 @@ assemble
 simulate
 dumpsim
 */*.obj
+t
+storeNums.asm
