@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
 /**----------------------------------- Definitions ------------------------------------*/
 #define MANUAL_DEBUG FALSE
 #define EMPTY_VAL 0
-#define LOG_LEVEL NONE
+#define LOG_LEVEL DEBUG
 #define MAX_LOG_DEF_ARGS 4
 #define MAX_NUM_OPCODES 29
 #define nibble 4
@@ -629,6 +629,40 @@ int main(int argc, char *argv[]) {
 #define getPCoffset9(pc) Low16bits((incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9))))
 /*---------------------------------------------------------------------------------*/
 #define low3bits(BEN, R, IR11) (((BEN << 2) + (R << 1) + IR11) & 0x0007)
+/* R.W */
+    #define RD_         0
+    #define WR_         1
+/* DATA.SIZE */
+    #define BYTE_       0
+    #define WORD_       1
+/* PCMUX */
+    #define PCplus2_    0
+    #define BUS_        1
+    #define ADDER_PC_   2
+/* DRMUX */
+    #define B11_9_      0
+    #define R7_         1
+/* SR1MUX */
+    #define B8_6_       1
+/* ADDR1MUX */
+    #define PC_         0
+    #define baseR_      1
+/* ADDR2MUX */
+    #define ZERO_       0
+    #define offset6_    1       /* SEXT[IR[5:0]] */
+    #define PCoffset9_  2       /* SEXT[IR[8:0]] */
+    #define PCoffset11_ 3       /* SEXT[IR[10:0]] */
+/* MARMUX */
+    #define B7_0_       0       /* LSHF(ZEXT[IR[7:0]],1) */
+    #define ADDER_MAR_  1
+/* ALUK */
+    #define ADD_        0
+    #define AND_        1
+    #define XOR_        2
+    #define PASSA_      3
+/* SIGNALS */
+    #define NO_         0
+    #define YES_        1
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -640,6 +674,14 @@ int main(int argc, char *argv[]) {
 
 
 /**-------------------------------- Structures & Enums --------------------------------*/
+typedef struct MEMORY_EMULATOR_STRUCTURE{
+    int MAR,
+        MDR,
+        R,
+        MIO_EN,
+        R_W,
+        DATA_SIZE;
+} MEMORY_STRUCT;
 enum DATA_TYPE {
     CUR_LATCH,
     MICROINST,
@@ -741,22 +783,17 @@ int getBranchStatus(int cond, int BEN);
 
 void cpyMicroInst(int dst[], int src[]);
 
-/*void processNop();
-
-void setRegWithCC(int16_t reg, int16_t val);
-
-void storeByteValue(uint16_t addr, int16_t val);
-
-void storeWordVal(uint16_t addr, int16_t val);
-
-int decodeAndExecute(int pc, enum OPCODES opcode);
+MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch);
 
 int16_t MEM_BYTE(uint16_t addr);
 
-void setupNextLatch();*/
+void storeWordVal(uint16_t MAR, int16_t MDR);
+
+void storeByteValue(uint16_t MAR, int16_t MDR);
+
+void memOperation(MEMORY_STRUCT memSignlas);
 
 
-bool isMemAccessState(int s);
 
 /**-------------------------------- Function Definitions ------------------------------*/
 /**
@@ -790,18 +827,50 @@ void eval_micro_sequencer() {
   * cycle to prepare microsequencer for the fifth cycle.
   */
 void cycle_memory() {
-    int curState, curReady, curMAR;
+    int MIO = GetMIO_EN(CURRENT_LATCHES.MICROINSTRUCTION);
+    MEMORY_STRUCT curMem = dupMem(CURRENT_LATCHES);
 
-    curState = CURRENT_LATCHES.STATE_NUMBER;
-    curReady = CURRENT_LATCHES.READY;
-    curMAR = CURRENT_LATCHES.MAR;
-
-    if (curReady == (MEM_CYCLES - 1)) {
-        NEXT_LATCHES.MDR = MEM(curMAR);
+    if (curMem.R == (MEM_CYCLES - 1)) {
+        memOperation(curMem);
         NEXT_LATCHES.READY = 0;
     }
-    else if (isMemAccessState(curState)) NEXT_LATCHES.READY = curReady + 1;
+    else if (MIO == YES_) NEXT_LATCHES.READY = curMem.R + 1;
+}
 
+/**
+ * emulates memory operations (i.e. load or store)
+ *
+ * @param nextLatch
+ * @param memSignlas
+ */
+void memOperation(MEMORY_STRUCT memSignlas) {
+
+    if (memSignlas.MIO_EN == NO_) {
+        loggingMsg("Memory operation terminated since MIO.EN is not enables.", error);
+        return;
+    }
+
+    switch (memSignlas.R_W) {
+        case RD_:
+            if (memSignlas.DATA_SIZE == BYTE_) {
+                /* TODO */
+            }
+            else if (memSignlas.DATA_SIZE == WORD_) {
+                NEXT_LATCHES.MAR = MEM(memSignlas.MAR);
+            }
+            break;
+        case WR_:
+            if (memSignlas.DATA_SIZE == BYTE_) {
+                /* TODO */
+            }
+            else if (memSignlas.DATA_SIZE == WORD_) {
+                storeWordVal((uint16_t) memSignlas.MAR, memSignlas.MDR);
+            }
+            break;
+        default:
+            logging(S, "Invalid R.W detected: ", I, memSignlas.R_W, error);
+            break;
+    }
 }
 
 /**
@@ -814,6 +883,7 @@ void cycle_memory() {
   *		 Gate_MDR.
   */
 void eval_bus_drivers() {
+
 }
 
 /**
@@ -855,9 +925,56 @@ int getReadyStatus(int cond, int R) {
     return cond == 1 && R == (MEM_CYCLES - 1);
 }
 
-bool isMemAccessState(int s) {
-    return s == 33 || s == 28 || s == 29 ||
-           s == 25 || s == 16 || s == 17;
+/**
+ * creates a memory structure copy based on signals in current microinstruction and latches
+ *
+ * @param curLatch
+ * @return
+ */
+MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch) {
+    MEMORY_STRUCT curMem;
+
+    curMem.R = curLatch.READY;
+    curMem.MAR = curLatch.MAR;
+    curMem.MDR = curLatch.MDR;
+    curMem.MIO_EN = GetMIO_EN(curLatch.MICROINSTRUCTION);
+    curMem.R_W = GetR_W(curLatch.MICROINSTRUCTION);
+    curMem.DATA_SIZE = GetDATA_SIZE(curLatch.MICROINSTRUCTION);
+
+    return curMem;
+}
+
+int16_t MEM_BYTE(uint16_t addr) {
+    int16_t result;
+
+    if (addr % 2 == 0) {
+        result = (0x00FF & MEMORY[addr/2][0]);
+
+    } else {
+        addr -= 1;
+        result = (0x00FF & MEMORY[addr/2][1]);
+    }
+
+    if (result & 0x0080)
+        result = result + 0xFF00;
+
+    return Low16bits(result);
+}
+
+void storeWordVal(uint16_t MAR, int16_t MDR) {
+    loggingNoHeader(S, "<SW> Storing ", I, MDR, S, " into address ", I, MAR, info);
+
+    int *mem = MEMORY[MAR / 2];
+
+    mem[0] = Low16bits(MDR & 0x000000FF);
+    mem[1] = Low16bits(MDR & 0x0000FF00) >> 2*nibble;
+}
+
+void storeByteValue(uint16_t MAR, int16_t MDR) {
+    loggingNoHeader(S, "<SB> Storing ", I, MDR, S, " into address ", I, MAR, info);
+    int *mem = MEMORY[MAR / 2];
+
+    mem[MAR % 2] = Low16bits(MDR & 0x00FF);
 }
 
 
@@ -1232,26 +1349,15 @@ void loggingNoHeader(int num, ...) {
 }
 
 
-/*
 void process_instruction() {
 
-    */
-/*    uint16_t i = 0xE15F;
+    uint16_t i = 0xE15F;
     uint16_t j = 0x215F;
     logging(S, "value is: ", I, RSHFN(i, 0x0003, bitVal(i, 15)), info);
     logging(S, "value is: ", I, RSHFN(j, 5, bitVal(j, 15)), info);
     logging(S, "value is: ", I, LSHFN(j, 5), info);
-    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);*//*
+    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);
 
-    */
-/*  function: process_instruction
-     *
-     *    Process one instruction at a time
-     *       -Fetch one instruction
-     *       -Decode
-     *       -Execute
-     *       -Update NEXT_LATCHES
-     *//*
 
     static int instruction_num = 0;
     logging(S, "Simulating instruction #", Id, instruction_num++, info);
@@ -1269,8 +1375,7 @@ void process_instruction() {
 
     NEXT_LATCHES.PC = next_pc;
 
-    */
-/*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*//*
+loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);
 
 }
 
@@ -1305,31 +1410,10 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             break;
         case ldb:
             val = SR1(pc) + SEXT(boffset6(pc), 6);
-            */
-/**loggingNoHeader(S, AMAG"<LB> "ANRM"Loading ",
-                            I, SEXT(MEM_BYTE(val), 9),
-                            S, " into register R", I, DR_NUM(pc),
-                            N, S, "offset: ", I, boffset6(pc),
-                            N, S, "SEXT: ", I, SEXT(boffset6(pc), 6),
-                            N, S, "SR1: ", I, SR1(pc),
-                            N, S, "MEM_BYTE: ", I, MEM_BYTE(val),
-                            N, S, "SR + offset: ", I, SR1(pc) + SEXT(boffset6(pc), 6),
-                            N, S, "arg: ", I, val, info);*//*
-
             setRegWithCC(DR_NUM(pc), SEXT(MEM_BYTE(val), 9));
             break;
         case ldw:
             val = SR1(pc) + LSHF(SEXT(offset6(pc), 6));
-            */
-/**loggingNoHeader(S, AMAG"<LW> "ANRM"Loading ",
-                            I, MEM(val),
-                            S, " into register R", I, DR_NUM(pc),
-                            N, S, "offset: ", I, offset6(pc),
-                            N, S, "SEXT: ", I, SEXT(offset6(pc), 6),
-                            N, S, "LSHF: ", I, LSHF(SEXT(offset6(pc), 6)),
-                            N, S, "arg: ", I, val,
-                            N, S, "SR1: ", I, SR1(pc), info);*//*
-
             setRegWithCC(DR_NUM(pc), MEM(val));
             break;
         case lshf:
@@ -1384,9 +1468,6 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             next_pc = getPCoffset9(pc);
             break;
         case rti:
-            */
-/* Don't care! *//*
-
             break;
         case ret:
         case jmp:
@@ -1418,49 +1499,9 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             processNop();
             break;
         default:
-            */
-/* Don't care!*//*
-
             break;
     }
     return next_pc;
-}
-
-
-int16_t MEM_BYTE(uint16_t addr) {
-    int16_t result;
-
-    if (addr % 2 == 0) {
-        result = (0x00FF & MEMORY[addr/2][0]);
-
-    } else {
-        addr -= 1;
-        result = (0x00FF & MEMORY[addr/2][1]);
-    }
-
-    if (result & 0x0080)
-        result = result + 0xFF00;
-
-    return Low16bits(result);
-}
-
-
-void storeWordVal(uint16_t addr, int16_t val) {
-    loggingNoHeader(S, "<SW> Storing ", I, val, S, " into address ", I, addr, info);
-    int *mem = MEMORY[addr / 2];
-    mem[0] = Low16bits(val & 0x000000FF);
-    mem[1] = Low16bits(val & 0x0000FF00) >> 2*nibble;
-}
-
-
-void storeByteValue(uint16_t addr, int16_t val) {
-    loggingNoHeader(S, "<SB> Storing ", I, val, S, " into address ", I, addr, info);
-    int *mem = MEMORY[addr / 2];
-    if (addr % 2 == 0) {
-        mem[0] = Low16bits(val & 0x00FF);
-    } else {
-        mem[1] = Low16bits(val & 0x00FF);
-    }
 }
 
 
@@ -1516,4 +1557,4 @@ enum OPCODES fetch(int opcode, int pc) {
                     S, lowerOpcodes[result], info);
 
     return result;
-}*/
+}
