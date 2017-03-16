@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
 /**----------------------------------- Definitions ------------------------------------*/
 #define MANUAL_DEBUG FALSE
 #define EMPTY_VAL 0
-#define LOG_LEVEL DEBUG
+#define LOG_LEVEL NONE
 #define MAX_LOG_DEF_ARGS 4
 #define MAX_NUM_OPCODES 29
 #define nibble 4
@@ -627,6 +627,8 @@ int main(int argc, char *argv[]) {
 #define PCoffset9(pc) (MEM(pc) & 0x01FF)
 #define PCoffset11(pc) (MEM(pc) & 0x07FF)
 #define getPCoffset9(pc) Low16bits((incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9))))
+/*---------------------------------------------------------------------------------*/
+#define low3bits(BEN, R, IR11) (((BEN << 2) + (R << 1) + IR11) & 0x0007)
 #define ANRM  "\x1B[0m"
 #define ARED  "\x1B[31m"
 #define AGRN  "\x1B[32m"
@@ -731,7 +733,15 @@ void println(int num, ...);
 
 enum OPCODES fetch(int opcode, int pc);
 
-void processNop();
+int getReadyStatus(int cond, int R);
+
+int getAddrModeStatus(int cond, int IR11);
+
+int getBranchStatus(int cond, int BEN);
+
+void cpyMicroInst(int dst[], int src[]);
+
+/*void processNop();
 
 void setRegWithCC(int16_t reg, int16_t val);
 
@@ -743,338 +753,111 @@ int decodeAndExecute(int pc, enum OPCODES opcode);
 
 int16_t MEM_BYTE(uint16_t addr);
 
-void setupNextLatch();
+void setupNextLatch();*/
 
+
+bool isMemAccessState(int s);
 
 /**-------------------------------- Function Definitions ------------------------------*/
+/**
+ * Evaluate the address of the next state according to the
+ * micro sequencer logic. Latch the next microinstruction.
+ */
 void eval_micro_sequencer() {
     logging(CUR_LATCH, &CURRENT_LATCHES, debug);
-  /*
-   * Evaluate the address of the next state according to the
-   * micro sequencer logic. Latch the next microinstruction.
-   */
+    int COND, readyStatus, addrModeStatus, branchStatus, nextStateAddr, J;
+
+    J = GetJ(CURRENT_LATCHES.MICROINSTRUCTION);
+    COND = GetCOND(CURRENT_LATCHES.MICROINSTRUCTION);
+    readyStatus = getReadyStatus(COND, CURRENT_LATCHES.READY);
+    addrModeStatus = getAddrModeStatus(COND, bitVal(CURRENT_LATCHES.IR, 11));
+    branchStatus = getBranchStatus(COND, CURRENT_LATCHES.BEN);
+
+    nextStateAddr = Low16bits(J | low3bits(branchStatus, readyStatus, addrModeStatus));
+    loggingNoHeader(S, "Next state address: ", I, nextStateAddr, debug);
+
+    NEXT_LATCHES.STATE_NUMBER = nextStateAddr;
+    cpyMicroInst(NEXT_LATCHES.MICROINSTRUCTION, CONTROL_STORE[nextStateAddr]);
+
+    loggingNoHeader(S, "Next state microinstruction: \n\t", MICROINST, NEXT_LATCHES.MICROINSTRUCTION, debug);
 
 }
 
-
+/**
+  * This function emulates memory and the WE logic.
+  * Keep track of which cycle of MEMEN we are dealing with.
+  * If fourth, we need to latch Ready bit at the end of
+  * cycle to prepare microsequencer for the fifth cycle.
+  */
 void cycle_memory() {
+    int curState, curReady, curMAR;
 
-  /*
-   * This function emulates memory and the WE logic.
-   * Keep track of which cycle of MEMEN we are dealing with.
-   * If fourth, we need to latch Ready bit at the end of
-   * cycle to prepare microsequencer for the fifth cycle.
-   */
+    curState = CURRENT_LATCHES.STATE_NUMBER;
+    curReady = CURRENT_LATCHES.READY;
+    curMAR = CURRENT_LATCHES.MAR;
+
+    if (curReady == (MEM_CYCLES - 1)) {
+        NEXT_LATCHES.MDR = MEM(curMAR);
+        NEXT_LATCHES.READY = 0;
+    }
+    else if (isMemAccessState(curState)) NEXT_LATCHES.READY = curReady + 1;
 
 }
 
-
+/**
+  * Datapath routine emulating operations before driving the bus.
+  * Evaluate the input of tristate drivers
+  *         Gate_MARMUX,
+  *		 Gate_PC,
+  *		 Gate_ALU,
+  *		 Gate_SHF,
+  *		 Gate_MDR.
+  */
 void eval_bus_drivers() {
-
-  /*
-   * Datapath routine emulating operations before driving the bus.
-   * Evaluate the input of tristate drivers
-   *         Gate_MARMUX,
-   *		 Gate_PC,
-   *		 Gate_ALU,
-   *		 Gate_SHF,
-   *		 Gate_MDR.
-   */
-
 }
 
-
+/**
+  * Datapath routine for driving the bus from one of the 5 possible
+  * tristate drivers.
+  */
 void drive_bus() {
 
-  /*
-   * Datapath routine for driving the bus from one of the 5 possible
-   * tristate drivers.
-   */
-
 }
 
-
+/**
+  * Datapath routine for computing all functions that need to latch
+  * values in the data path at the end of this cycle.  Some values
+  * require sourcing the bus; therefore, this routine has to come
+  * after drive_bus.
+  */
 void latch_datapath_values() {
 
-  /*
-   * Datapath routine for computing all functions that need to latch
-   * values in the data path at the end of this cycle.  Some values
-   * require sourcing the bus; therefore, this routine has to come
-   * after drive_bus.
-   */
-
 }
 
-
-void process_instruction() {
-
-    /*    uint16_t i = 0xE15F;
-    uint16_t j = 0x215F;
-    logging(S, "value is: ", I, RSHFN(i, 0x0003, bitVal(i, 15)), info);
-    logging(S, "value is: ", I, RSHFN(j, 5, bitVal(j, 15)), info);
-    logging(S, "value is: ", I, LSHFN(j, 5), info);
-    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);*/
-    /*  function: process_instruction
-     *
-     *    Process one instruction at a time
-     *       -Fetch one instruction
-     *       -Decode
-     *       -Execute
-     *       -Update NEXT_LATCHES
-     */
-    static int instruction_num = 0;
-    logging(S, "Simulating instruction #", Id, instruction_num++, info);
-
-    int pc = CURRENT_LATCHES.PC, next_pc;
-    setupNextLatch();
-    loggingNoHeader(STAT, &CURRENT_LATCHES, N,
-                    S, "current instruction: ", ADDR, pc, debug);
-
-    enum OPCODES opcode = fetch(nibble4(pc), pc);
-
-
-    next_pc = decodeAndExecute(pc, opcode);
-
-
-    NEXT_LATCHES.PC = next_pc;
-
-    /*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*/
-}
-
-
-void setupNextLatch() {
+void cpyMicroInst(int dst[], int src[]) {
     int i;
-    NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
-    NEXT_LATCHES.P = CURRENT_LATCHES.P;
-    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
-    NEXT_LATCHES.N = CURRENT_LATCHES.N;
-    for(i=0; i < LC_3b_REGS; i++)
-        NEXT_LATCHES.REGS[i]=CURRENT_LATCHES.REGS[i];
-}
 
-
-int decodeAndExecute(int pc, enum OPCODES opcode) {
-    int next_pc = pc + 2;
-    int16_t val;
-
-    switch (opcode) {
-        case add:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), SR1(pc) + SR2(pc));
-            else
-                setRegWithCC(DR_NUM(pc), SR1(pc) + SEXT(imm5(pc), 5));
-            break;
-        case and:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), SR1(pc) & SR2(pc));
-            else
-                setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
-            break;
-        case ldb:
-            val = SR1(pc) + SEXT(boffset6(pc), 6);
-            /**loggingNoHeader(S, AMAG"<LB> "ANRM"Loading ",
-                            I, SEXT(MEM_BYTE(val), 9),
-                            S, " into register R", I, DR_NUM(pc),
-                            N, S, "offset: ", I, boffset6(pc),
-                            N, S, "SEXT: ", I, SEXT(boffset6(pc), 6),
-                            N, S, "SR1: ", I, SR1(pc),
-                            N, S, "MEM_BYTE: ", I, MEM_BYTE(val),
-                            N, S, "SR + offset: ", I, SR1(pc) + SEXT(boffset6(pc), 6),
-                            N, S, "arg: ", I, val, info);*/
-            setRegWithCC(DR_NUM(pc), SEXT(MEM_BYTE(val), 9));
-            break;
-        case ldw:
-            val = SR1(pc) + LSHF(SEXT(offset6(pc), 6));
-            /**loggingNoHeader(S, AMAG"<LW> "ANRM"Loading ",
-                            I, MEM(val),
-                            S, " into register R", I, DR_NUM(pc),
-                            N, S, "offset: ", I, offset6(pc),
-                            N, S, "SEXT: ", I, SEXT(offset6(pc), 6),
-                            N, S, "LSHF: ", I, LSHF(SEXT(offset6(pc), 6)),
-                            N, S, "arg: ", I, val,
-                            N, S, "SR1: ", I, SR1(pc), info);*/
-            setRegWithCC(DR_NUM(pc), MEM(val));
-            break;
-        case lshf:
-        case rshfl:
-        case rshfa:
-            if (bit(pc, 4) == 0)
-                setRegWithCC(DR_NUM(pc), LSHFN(SR1(pc), amount4(pc)));
-            else if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), 0));
-            else
-                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bitVal(SR1(pc), 15)));
-            break;
-        case stb:
-            storeByteValue((uint16_t) (SR1(pc) + SEXT(boffset6(pc), 6)), Low16bits((DR(pc) & 0x00FF)));
-            break;
-        case stw:
-            storeWordVal((uint16_t) (SR1(pc) + LSHF(SEXT(offset6(pc), 6))), Low16bits(DR(pc)));
-            break;
-        case not:
-        case xor:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SR2(pc)));
-            else
-                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SEXT(imm5(pc), 5)));
-            break;
-        case brn:
-            if (CURRENT_LATCHES.N == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brp:
-            if (CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brnp:
-            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brz:
-            if (CURRENT_LATCHES.Z == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brnz:
-            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.Z == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brzp:
-            if (CURRENT_LATCHES.Z == TRUE || CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case br:
-        case brnzp:
-            next_pc = getPCoffset9(pc);
-            break;
-        case rti:
-            /* Don't care! */
-            break;
-        case ret:
-        case jmp:
-            next_pc = Low16bits(SR1(pc));
-            break;
-        case jsrr:
-        case jsr:
-            if (TRUE) {
-                int16_t temp = Low16bits(incrmntdPC(pc));
-                if (bit(pc, 11) == 0) {
-                    next_pc = Low16bits(SR1(pc));
-
-                } else {
-                    next_pc = Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset11(pc), 11)));
-                }
-                NEXT_LATCHES.REGS[r7] = temp;
-            }
-            break;
-        case lea:
-            NEXT_LATCHES.REGS[DR_NUM(pc)] =
-                    Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)));
-            break;
-        case trap:
-        case halt:
-            NEXT_LATCHES.REGS[r7] = Low16bits(incrmntdPC(pc));
-            next_pc = MEM(LSHF(ZEXT8(pc)));
-            break;
-        case nop:
-            processNop();
-            break;
-        default:
-            /* Don't care!*/
-            break;
-    }
-    return next_pc;
-}
-
-
-int16_t MEM_BYTE(uint16_t addr) {
-    int16_t result;
-
-    if (addr % 2 == 0) {
-        result = (0x00FF & MEMORY[addr/2][0]);
-
-    } else {
-        addr -= 1;
-        result = (0x00FF & MEMORY[addr/2][1]);
+    for (i = 0; i < CONTROL_STORE_BITS; ++i) {
+        dst[i] = src[i];
     }
 
-    if (result & 0x0080)
-        result = result + 0xFF00;
-
-    return Low16bits(result);
 }
 
-
-void storeWordVal(uint16_t addr, int16_t val) {
-    loggingNoHeader(S, "<SW> Storing ", I, val, S, " into address ", I, addr, info);
-    int *mem = MEMORY[addr / 2];
-    mem[0] = Low16bits(val & 0x000000FF);
-    mem[1] = Low16bits(val & 0x0000FF00) >> 2*nibble;
+int getBranchStatus(int cond, int BEN) {
+    return cond == 2 && BEN;
 }
 
-
-void storeByteValue(uint16_t addr, int16_t val) {
-    loggingNoHeader(S, "<SB> Storing ", I, val, S, " into address ", I, addr, info);
-    int *mem = MEMORY[addr / 2];
-    if (addr % 2 == 0) {
-        mem[0] = Low16bits(val & 0x00FF);
-    } else {
-        mem[1] = Low16bits(val & 0x00FF);
-    }
+int getAddrModeStatus(int cond, int IR11) {
+    return cond == 3 && IR11;
 }
 
-
-void setRegWithCC(int16_t reg, int16_t val) {
-    if (val > 0) NEXT_LATCHES.P = TRUE;
-    else NEXT_LATCHES.P = FALSE;
-
-    if (val == 0) NEXT_LATCHES.Z = TRUE;
-    else NEXT_LATCHES.Z = FALSE;
-
-    if (val < 0) NEXT_LATCHES.N = TRUE;
-    else NEXT_LATCHES.N = FALSE;
-
-    NEXT_LATCHES.REGS[reg] = Low16bits(val);
+int getReadyStatus(int cond, int R) {
+    return cond == 1 && R == (MEM_CYCLES - 1);
 }
 
-
-void processNop() {
-    int k;
-    NEXT_LATCHES.N = CURRENT_LATCHES.N;
-    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
-    NEXT_LATCHES.P = CURRENT_LATCHES.P;
-    for (k = 0; k < LC_3b_REGS; k++)
-        NEXT_LATCHES.REGS[k] = CURRENT_LATCHES.REGS[k];
-}
-
-
-enum OPCODES fetch(int opcode, int pc) {
-    loggingNoHeader(S, "finding opcode for ", Ix, opcode, debug);
-
-    int j;
-    enum OPCODES result = fill;
-
-    for (j = 0; j < MAX_NUM_OPCODES; ++j)
-        if (opcode == opcodes[j] << 3 * nibble)
-            result = opcodeEnum[j];
-    if (opcode == 0) {
-        if (adjArgOne(4) == arg1(pc)) result = brn;
-        else if (adjArgOne(1) == arg1(pc)) result = brp;
-        else if (adjArgOne(5) == arg1(pc)) result = brnp;
-        else if (adjArgOne(2) == arg1(pc)) result = brz;
-        else if (adjArgOne(6) == arg1(pc)) result = brnz;
-        else if (adjArgOne(3) == arg1(pc)) result = brzp;
-        else if (adjArgOne(7) == arg1(pc)) result = br;
-        else if (MEM(pc) == opcodes[nop]) result = nop;
-        else {
-            loggingMsg("Invalid instruction.", error);
-            exit(4);
-        }
-    }
-
-    loggingNoHeader(S, "Value ", Ix, opcode, S, " is for opcode ",
-                    S, lowerOpcodes[result], info);
-
-    return result;
+bool isMemAccessState(int s) {
+    return s == 33 || s == 28 || s == 29 ||
+           s == 25 || s == 16 || s == 17;
 }
 
 
@@ -1371,10 +1154,10 @@ void printLog(const char *func, int line, enum LOG_LEVELS level, int length, voi
                 printf("[%s]: func:'%s' → line:%d (%d)\n" ANRM, enumStrings[level], func, line, curLogNum);
 
             } else{
-                if (line < 10) printf("\n------------------(%d)----------------\n", line);
-                else if (line < 100) printf("\n------------------(%d)---------------\n", line);
-                else if (line < 1000) printf("\n-----------------(%d)---------------\n", line);
-                else printf("\n-----------------(%d)--------------\n", line);
+                if (line < 10) printf("\n------------------c(%d) -> l(%d)----------------\n", (CYCLE_COUNT+1), line);
+                else if (line < 100) printf("\n------------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
+                else if (line < 1000) printf("\n-----------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
+                else printf("\n-----------------c(%d) -> l(%d)--------------\n", (CYCLE_COUNT+1), line);
             }
 
         }
@@ -1447,3 +1230,290 @@ void loggingNoHeader(int num, ...) {
     va_end(valist);
 
 }
+
+
+/*
+void process_instruction() {
+
+    */
+/*    uint16_t i = 0xE15F;
+    uint16_t j = 0x215F;
+    logging(S, "value is: ", I, RSHFN(i, 0x0003, bitVal(i, 15)), info);
+    logging(S, "value is: ", I, RSHFN(j, 5, bitVal(j, 15)), info);
+    logging(S, "value is: ", I, LSHFN(j, 5), info);
+    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);*//*
+
+    */
+/*  function: process_instruction
+     *
+     *    Process one instruction at a time
+     *       -Fetch one instruction
+     *       -Decode
+     *       -Execute
+     *       -Update NEXT_LATCHES
+     *//*
+
+    static int instruction_num = 0;
+    logging(S, "Simulating instruction #", Id, instruction_num++, info);
+
+    int pc = CURRENT_LATCHES.PC, next_pc;
+    setupNextLatch();
+    loggingNoHeader(STAT, &CURRENT_LATCHES, N,
+                    S, "current instruction: ", ADDR, pc, debug);
+
+    enum OPCODES opcode = fetch(nibble4(pc), pc);
+
+
+    next_pc = decodeAndExecute(pc, opcode);
+
+
+    NEXT_LATCHES.PC = next_pc;
+
+    */
+/*loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);*//*
+
+}
+
+
+void setupNextLatch() {
+    int i;
+    NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
+    NEXT_LATCHES.P = CURRENT_LATCHES.P;
+    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
+    NEXT_LATCHES.N = CURRENT_LATCHES.N;
+    for(i=0; i < LC_3b_REGS; i++)
+        NEXT_LATCHES.REGS[i]=CURRENT_LATCHES.REGS[i];
+}
+
+
+int decodeAndExecute(int pc, enum OPCODES opcode) {
+    int next_pc = pc + 2;
+    int16_t val;
+
+    switch (opcode) {
+        case add:
+            if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), SR1(pc) + SR2(pc));
+            else
+                setRegWithCC(DR_NUM(pc), SR1(pc) + SEXT(imm5(pc), 5));
+            break;
+        case and:
+            if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), SR1(pc) & SR2(pc));
+            else
+                setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
+            break;
+        case ldb:
+            val = SR1(pc) + SEXT(boffset6(pc), 6);
+            */
+/**loggingNoHeader(S, AMAG"<LB> "ANRM"Loading ",
+                            I, SEXT(MEM_BYTE(val), 9),
+                            S, " into register R", I, DR_NUM(pc),
+                            N, S, "offset: ", I, boffset6(pc),
+                            N, S, "SEXT: ", I, SEXT(boffset6(pc), 6),
+                            N, S, "SR1: ", I, SR1(pc),
+                            N, S, "MEM_BYTE: ", I, MEM_BYTE(val),
+                            N, S, "SR + offset: ", I, SR1(pc) + SEXT(boffset6(pc), 6),
+                            N, S, "arg: ", I, val, info);*//*
+
+            setRegWithCC(DR_NUM(pc), SEXT(MEM_BYTE(val), 9));
+            break;
+        case ldw:
+            val = SR1(pc) + LSHF(SEXT(offset6(pc), 6));
+            */
+/**loggingNoHeader(S, AMAG"<LW> "ANRM"Loading ",
+                            I, MEM(val),
+                            S, " into register R", I, DR_NUM(pc),
+                            N, S, "offset: ", I, offset6(pc),
+                            N, S, "SEXT: ", I, SEXT(offset6(pc), 6),
+                            N, S, "LSHF: ", I, LSHF(SEXT(offset6(pc), 6)),
+                            N, S, "arg: ", I, val,
+                            N, S, "SR1: ", I, SR1(pc), info);*//*
+
+            setRegWithCC(DR_NUM(pc), MEM(val));
+            break;
+        case lshf:
+        case rshfl:
+        case rshfa:
+            if (bit(pc, 4) == 0)
+                setRegWithCC(DR_NUM(pc), LSHFN(SR1(pc), amount4(pc)));
+            else if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), 0));
+            else
+                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bitVal(SR1(pc), 15)));
+            break;
+        case stb:
+            storeByteValue((uint16_t) (SR1(pc) + SEXT(boffset6(pc), 6)), Low16bits((DR(pc) & 0x00FF)));
+            break;
+        case stw:
+            storeWordVal((uint16_t) (SR1(pc) + LSHF(SEXT(offset6(pc), 6))), Low16bits(DR(pc)));
+            break;
+        case not:
+        case xor:
+            if (bit(pc, 5) == 0)
+                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SR2(pc)));
+            else
+                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SEXT(imm5(pc), 5)));
+            break;
+        case brn:
+            if (CURRENT_LATCHES.N == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case brp:
+            if (CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case brnp:
+            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case brz:
+            if (CURRENT_LATCHES.Z == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case brnz:
+            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.Z == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case brzp:
+            if (CURRENT_LATCHES.Z == TRUE || CURRENT_LATCHES.P == TRUE)
+                next_pc = getPCoffset9(pc);
+            break;
+        case br:
+        case brnzp:
+            next_pc = getPCoffset9(pc);
+            break;
+        case rti:
+            */
+/* Don't care! *//*
+
+            break;
+        case ret:
+        case jmp:
+            next_pc = Low16bits(SR1(pc));
+            break;
+        case jsrr:
+        case jsr:
+            if (TRUE) {
+                int16_t temp = Low16bits(incrmntdPC(pc));
+                if (bit(pc, 11) == 0) {
+                    next_pc = Low16bits(SR1(pc));
+
+                } else {
+                    next_pc = Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset11(pc), 11)));
+                }
+                NEXT_LATCHES.REGS[r7] = temp;
+            }
+            break;
+        case lea:
+            NEXT_LATCHES.REGS[DR_NUM(pc)] =
+                    Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)));
+            break;
+        case trap:
+        case halt:
+            NEXT_LATCHES.REGS[r7] = Low16bits(incrmntdPC(pc));
+            next_pc = MEM(LSHF(ZEXT8(pc)));
+            break;
+        case nop:
+            processNop();
+            break;
+        default:
+            */
+/* Don't care!*//*
+
+            break;
+    }
+    return next_pc;
+}
+
+
+int16_t MEM_BYTE(uint16_t addr) {
+    int16_t result;
+
+    if (addr % 2 == 0) {
+        result = (0x00FF & MEMORY[addr/2][0]);
+
+    } else {
+        addr -= 1;
+        result = (0x00FF & MEMORY[addr/2][1]);
+    }
+
+    if (result & 0x0080)
+        result = result + 0xFF00;
+
+    return Low16bits(result);
+}
+
+
+void storeWordVal(uint16_t addr, int16_t val) {
+    loggingNoHeader(S, "<SW> Storing ", I, val, S, " into address ", I, addr, info);
+    int *mem = MEMORY[addr / 2];
+    mem[0] = Low16bits(val & 0x000000FF);
+    mem[1] = Low16bits(val & 0x0000FF00) >> 2*nibble;
+}
+
+
+void storeByteValue(uint16_t addr, int16_t val) {
+    loggingNoHeader(S, "<SB> Storing ", I, val, S, " into address ", I, addr, info);
+    int *mem = MEMORY[addr / 2];
+    if (addr % 2 == 0) {
+        mem[0] = Low16bits(val & 0x00FF);
+    } else {
+        mem[1] = Low16bits(val & 0x00FF);
+    }
+}
+
+
+void setRegWithCC(int16_t reg, int16_t val) {
+    if (val > 0) NEXT_LATCHES.P = TRUE;
+    else NEXT_LATCHES.P = FALSE;
+
+    if (val == 0) NEXT_LATCHES.Z = TRUE;
+    else NEXT_LATCHES.Z = FALSE;
+
+    if (val < 0) NEXT_LATCHES.N = TRUE;
+    else NEXT_LATCHES.N = FALSE;
+
+    NEXT_LATCHES.REGS[reg] = Low16bits(val);
+}
+
+
+void processNop() {
+    int k;
+    NEXT_LATCHES.N = CURRENT_LATCHES.N;
+    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
+    NEXT_LATCHES.P = CURRENT_LATCHES.P;
+    for (k = 0; k < LC_3b_REGS; k++)
+        NEXT_LATCHES.REGS[k] = CURRENT_LATCHES.REGS[k];
+}
+
+
+enum OPCODES fetch(int opcode, int pc) {
+    loggingNoHeader(S, "finding opcode for ", Ix, opcode, debug);
+
+    int j;
+    enum OPCODES result = fill;
+
+    for (j = 0; j < MAX_NUM_OPCODES; ++j)
+        if (opcode == opcodes[j] << 3 * nibble)
+            result = opcodeEnum[j];
+    if (opcode == 0) {
+        if (adjArgOne(4) == arg1(pc)) result = brn;
+        else if (adjArgOne(1) == arg1(pc)) result = brp;
+        else if (adjArgOne(5) == arg1(pc)) result = brnp;
+        else if (adjArgOne(2) == arg1(pc)) result = brz;
+        else if (adjArgOne(6) == arg1(pc)) result = brnz;
+        else if (adjArgOne(3) == arg1(pc)) result = brzp;
+        else if (adjArgOne(7) == arg1(pc)) result = br;
+        else if (MEM(pc) == opcodes[nop]) result = nop;
+        else {
+            loggingMsg("Invalid instruction.", error);
+            exit(4);
+        }
+    }
+
+    loggingNoHeader(S, "Value ", Ix, opcode, S, " is for opcode ",
+                    S, lowerOpcodes[result], info);
+
+    return result;
+}*/
