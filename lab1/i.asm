@@ -1,0 +1,4 @@
+	.ORIG x3000
+	AND R0 R0 R0
+	HALT
+	.END
