@@ -16,7 +16,7 @@ exe="simulate"
 control_store="ucode3"
 asm="./tests/test"
 cmd="./inputs/in"
-output="./outputs/aout"
+output="./outputs/actual_output.txt"
 postfix=".txt"
 cleaner_script="cleaner.sh"
 tester_script="tester.sh"
@@ -28,13 +28,13 @@ printf "${blu}[INFO]${nrml} Running ${num_tests} tests... \n"
 for (( j = 0; j < $num_tests; j++ )); do
   i=$((j+1))
   # echo "Test ${i}:"
-  ./${exe} ${control_store} ${asm}${i}  < ${cmd}${i}${postfix} > ${output}${i}${postfix}
+  ./${exe} ${control_store} ${asm}${i}  < ${cmd}${i}${postfix} > ${output}
   temp=$?
   if [ $temp -ne 0 ]; then
     exitCode=$temp
     printf "${red}[ERROR]${nrml} Invalid file name in simulator. (${i})\n"
   fi
-  ./${cleaner_script} ${output}${i}${postfix}
+  ./${cleaner_script} ${output}
   temp=$?
   if [ $temp -ne 0 ]; then
     exitCode=$temp

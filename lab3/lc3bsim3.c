@@ -639,6 +639,7 @@ int main(int argc, char *argv[]) {
 
 /**-------------------------------- Structures & Enums --------------------------------*/
 enum DATA_TYPE {
+    CUR_LATCH,
     MICROINST,
     ADDR,
     STAT,
@@ -747,10 +748,7 @@ void setupNextLatch();
 
 /**-------------------------------- Function Definitions ------------------------------*/
 void eval_micro_sequencer() {
-    logging(I, CONTROL_STORE_BITS, debug);
-    logging(MICROINST, CONTROL_STORE[0], debug);
-
-
+    logging(CUR_LATCH, &CURRENT_LATCHES, debug);
   /*
    * Evaluate the address of the next state according to the
    * micro sequencer logic. Latch the next microinstruction.
@@ -1136,6 +1134,22 @@ void outputDouble(double value) {
 
 void output(void *V, enum DATA_TYPE Type) {
     switch (Type) {
+        case CUR_LATCH:
+            if (TRUE){
+                int k;
+                printf("N=%d, Z=%d, P=%d\nSTATE NUM=%d, PC=%d, BEN=%d, IR=%d\nMAR=%d, MDR=%d, READY=%d\n",
+                       CURRENT_LATCHES.N, CURRENT_LATCHES.Z, CURRENT_LATCHES.P,
+                       CURRENT_LATCHES.STATE_NUMBER, CURRENT_LATCHES.PC, CURRENT_LATCHES.BEN, CURRENT_LATCHES.IR,
+                       CURRENT_LATCHES.MAR, CURRENT_LATCHES.MDR, CURRENT_LATCHES.READY
+                );
+                output(CURRENT_LATCHES.MICROINSTRUCTION, MICROINST);
+                for (k = 0; k < LC_3b_REGS; k++) {
+                    printf("R%d: 0x%.4X  ", k, CURRENT_LATCHES.REGS[k]);
+                    if (k == 3) printf("\n");
+                }
+
+            }
+            break;
         case MICROINST:
             if (TRUE) {
                 int i;
@@ -1143,6 +1157,7 @@ void output(void *V, enum DATA_TYPE Type) {
                 for (i = 0; i < CONTROL_STORE_BITS; ++i) {
                     printf("%d", ((int *) V)[i]);
                 }
+                printf("\n");
             }
             break;
         case ADDR:

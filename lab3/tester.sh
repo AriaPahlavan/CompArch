@@ -13,9 +13,9 @@ nc='\033[0m'              # No Color
 
 file_num=$1
 postfix=".txt"
-aoutput="./outputs/aout${file_num}${postfix}"
+aoutput="./outputs/actual_output.txt"
 eoutput="./outputs/eout${file_num}${postfix}"
 
 # printf "${blu}[INFO]${nrml} Comparing aout${file_num}${postfix} with eout${file_num}${postfix}\n"
 
-diff ${aoutput} ${eoutput}
+diff -b -E -w -B ${aoutput} ${eoutput}
