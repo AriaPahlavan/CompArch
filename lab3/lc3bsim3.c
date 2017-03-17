@@ -580,55 +580,49 @@ int main(int argc, char *argv[]) {
 
 
 /**----------------------------------- Definitions ------------------------------------*/
-#define MANUAL_DEBUG FALSE
-#define EMPTY_VAL 0
-#define LOG_LEVEL DEBUG
-#define MAX_LOG_DEF_ARGS 4
-#define MAX_NUM_OPCODES 29
-#define nibble 4
-#define debug EOL, __FUNCTION__, __LINE__, DEBUG
-#define info EOL, __FUNCTION__, __LINE__, INFO
-#define warn EOL, __FUNCTION__, __LINE__, WARN
-#define error EOL, __FUNCTION__, __LINE__, ERROR
-#define incrmntdPC(pc) (pc+2)
-#define getMemData(mem_index) Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
-#define MEM(addr) getMemData(addr/2)
-#define bit(pc, b) Low16bits((MEM(pc) >> b) & 0x0001)
-#define bitVal(val, b) Low16bits(((val >> b) & 0x0001))
-#define getSignExtend(val, sign_bit) Low16bits(bitVal(val, sign_bit) == 1 ? ((0xFFFF << (sign_bit + 1)) | val) \
-                                                                : ((0xFFFF >> (16 - (sign_bit + 1))) & val))
-#define SEXT(val, num_bits) getSignExtend(val, num_bits-1)
-#define mPtr(pc) MEMORY[pc/2]
-#define topByte(pc) Low16bits((mPtr(pc)[1] << 2*nibble1))
-#define btmByte(pc) Low16bits((mPtr(pc)[0]))
-#define nibble1(pc) ((mPtr(pc)[0]) & 0x000F)
-#define nibble2(pc) ((mPtr(pc)[0]) & 0x00F0)
-#define nibble3(pc) ((mPtr(pc)[1] << 2*nibble) & 0x0F00)
-
-#define nibble4(pc) ((mPtr(pc)[1] << 2*nibble) & 0xF000)
-#define arg1(pc) (MEM(pc) & 0x0E00)
-#define adjArgOne(val) Low16bits(val << 2*nibble+1)
-#define SEXT_VAL(val, n) Low16bits((0xFFFF << (16 - n)) | val)
-#define ZEXT_VAL(val, n) Low16bits((0xFFFF >> n) & val)
-#define LSHF(val) Low16bits(val << 1)
-#define LSHFN(val, n) Low16bits(val << n)
-#define RSHFN(val, n, b) b == 0 ? ZEXT_VAL(val >> n, n) : SEXT_VAL(val >> n, n)
-#define ZEXT8(pc) (MEM(pc) & 0x00FF)
-#define DR_NUM(pc) Low16bits((((MEM(pc) & 0x0E00) >> 9) & 0x0007))
-#define SR1_NUM(pc) Low16bits((((MEM(pc) & 0x01C0) >> 6) & 0x0007))
-#define SR2_NUM(pc) Low16bits((MEM(pc) & 0x0007))
-#define DR(pc) Low16bits(CURRENT_LATCHES.REGS[DR_NUM(pc)])
-#define SR1(pc) Low16bits(CURRENT_LATCHES.REGS[SR1_NUM(pc)])
-#define SR2(pc) Low16bits(CURRENT_LATCHES.REGS[SR2_NUM(pc)])
-#define amount4(pc) (MEM(pc) & 0x000F)
-#define imm5(pc) (MEM(pc) & 0x001F)
-#define boffset6(pc) (MEM(pc) & 0x003F)
-#define offset6(pc) (MEM(pc) & 0x003F)
-#define PCoffset9(pc) (MEM(pc) & 0x01FF)
-#define PCoffset11(pc) (MEM(pc) & 0x07FF)
-#define getPCoffset9(pc) Low16bits((incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9))))
+#define MANUAL_DEBUG        FALSE
+#define EMPTY_VAL           0
+#define LOG_LEVEL           DEBUG
+#define MAX_LOG_DEF_ARGS    4
+#define MAX_NUM_OPCODES     29
+#define nibble              4
+#define debug               EOL, __FUNCTION__, __LINE__, DEBUG
+#define info                EOL, __FUNCTION__, __LINE__, INFO
+#define warn                EOL, __FUNCTION__, __LINE__, WARN
+#define error               EOL, __FUNCTION__, __LINE__, ERROR
+#define incrmntdPC(pc)      (pc+2)
+#define memData(mem_index)  Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
+#define MEM(addr)           memData(addr/2)
+#define bit(IR, b)          Low16bits((IR >> b) & 0x0001)
+#define signExt(val, sbit)  Low16bits(bit(val, sbit) == 1 ? ((0xFFFF << (sbit + 1)) | val) \
+                                                             : ((0xFFFF >> (16 - (sbit + 1))) & val))
+#define SEXT(val, num_bits) signExt(val, num_bits-1)
+#define lowByte(val)        Low16bits(val & 0x00FF)
+#define highByte(val)       lowByte(val >> 2*nibble)
+#define arg1(pc)            (MEM(pc) & 0x0E00)
+#define adjArgOne(val)      Low16bits(val << 2*nibble+1)
+#define SEXT_VAL(val, n)    Low16bits((0xFFFF << (16 - n)) | val)
+#define ZEXT_VAL(val, n)    Low16bits((0xFFFF >> n) & val)
+#define LSHF(val)           Low16bits(val << 1)
+#define LSHFN(val, n)       Low16bits(val << n)
+#define RSHFN(val, n, b)    b == 0 ? ZEXT_VAL(val >> n, n) : SEXT_VAL(val >> n, n)
+#define ZEXT8(val)           (val & 0x00FF)
+#define DR_NUM(IR)          Low16bits((((IR & 0x0E00) >> 9) & 0x0007))
+#define SR1_NUM(IR)         Low16bits((((IR & 0x01C0) >> 6) & 0x0007))
+#define SR2_NUM(IR)         Low16bits((IR & 0x0007))
+#define DR(IR)              Low16bits(CURRENT_LATCHES.REGS[DR_NUM(IR)])
+#define SR1(IR)             Low16bits(CURRENT_LATCHES.REGS[SR1_NUM(IR)])
+#define SR2(IR)             Low16bits(CURRENT_LATCHES.REGS[SR2_NUM(IR)])
+#define amount4(IR)         (IR & 0x000F)
+#define imm5(IR)            (IR & 0x001F)
+#define boffset6(IR)        (IR & 0x003F)
+#define offset6(IR)         (IR & 0x003F)
+#define PCoffset9(IR)       (IR & 0x01FF)
+#define PCoffset11(IR)      (IR & 0x07FF)
+#define getPCoffset9(IR, PC)    Low16bits((incrmntdPC(PC) + LSHF(SEXT(PCoffset9(IR), 9))))
 /*---------------------------------------------------------------------------------*/
 #define low3bits(BEN, R, IR11) (((BEN << 2) + (R << 1) + IR11) & 0x0007)
+#define align(addr) (addr & 0xFFFE)
 /* R.W */
     #define RD_         0
     #define WR_         1
@@ -644,14 +638,17 @@ int main(int argc, char *argv[]) {
     #define R7_         1
 /* SR1MUX */
     #define B8_6_       1
+/* SR2MUX */
+    #define SR2_        0
+    #define imm5_       1       /* SEXT[ IR[4:0]  ] */
 /* ADDR1MUX */
     #define PC_         0
     #define baseR_      1
 /* ADDR2MUX */
     #define ZERO_       0
-    #define offset6_    1       /* SEXT[IR[5:0]] */
-    #define PCoffset9_  2       /* SEXT[IR[8:0]] */
-    #define PCoffset11_ 3       /* SEXT[IR[10:0]] */
+    #define offset6_    1       /* SEXT[ IR[5:0]  ] */
+    #define PCoffset9_  2       /* SEXT[ IR[8:0]  ] */
+    #define PCoffset11_ 3       /* SEXT[ IR[10:0] ] */
 /* MARMUX */
     #define B7_0_       0       /* LSHF(ZEXT[IR[7:0]],1) */
     #define ADDER_MAR_  1
@@ -676,12 +673,21 @@ int main(int argc, char *argv[]) {
 /**-------------------------------- Structures & Enums --------------------------------*/
 typedef struct MEMORY_EMULATOR_STRUCTURE{
     int MAR,
-        MDR,
-        R,
-        MIO_EN,
-        R_W,
-        DATA_SIZE;
+            MDR,
+            R,
+            MIO_EN,
+            R_W,
+            DATA_SIZE;
 } MEMORY_STRUCT;
+typedef struct TRISTATE_GATES_STRUCTURE{
+    int gate_MARMUX_input,
+         gate_PC_input,
+         gate_ALU_input,
+         gate_SHF_input,
+         gate_MDR_input;
+
+    int16_t  ADDERoutput;
+} GATES_STRUCT;
 enum DATA_TYPE {
     CUR_LATCH,
     MICROINST,
@@ -745,6 +751,7 @@ enum REGISTERS {
 
 
 /**--------------------------------- Global Variables ---------------------------------*/
+GATES_STRUCT GATE_INPUTS;
 const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
 
 const static char *lowerOpcodes[] = {"add", "and", "br", "brn", "brp", "brnp", "brz", "brnz", "brzp",
@@ -785,15 +792,21 @@ void cpyMicroInst(int dst[], int src[]);
 
 MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch);
 
-int16_t MEM_BYTE(uint16_t addr);
-
 void storeWordVal(uint16_t MAR, int16_t MDR);
 
 void storeByteValue(uint16_t MAR, int16_t MDR);
 
 void memOperation(MEMORY_STRUCT memSignlas);
 
+int16_t getMARMUXoutput(System_Latches curLatch);
 
+int16_t getPCoutput(System_Latches curLatch);
+
+int16_t getALUoutput(System_Latches curLatch);
+
+int16_t getSHFoutput(System_Latches curLatch);
+
+int16_t getMDRMUXoutput(System_Latches curLatch);
 
 /**-------------------------------- Function Definitions ------------------------------*/
 /**
@@ -807,7 +820,7 @@ void eval_micro_sequencer() {
     J = GetJ(CURRENT_LATCHES.MICROINSTRUCTION);
     COND = GetCOND(CURRENT_LATCHES.MICROINSTRUCTION);
     readyStatus = getReadyStatus(COND, CURRENT_LATCHES.READY);
-    addrModeStatus = getAddrModeStatus(COND, bitVal(CURRENT_LATCHES.IR, 11));
+    addrModeStatus = getAddrModeStatus(COND, bit(CURRENT_LATCHES.IR, 11));
     branchStatus = getBranchStatus(COND, CURRENT_LATCHES.BEN);
 
     nextStateAddr = Low16bits(J | low3bits(branchStatus, readyStatus, addrModeStatus));
@@ -853,10 +866,10 @@ void memOperation(MEMORY_STRUCT memSignlas) {
     switch (memSignlas.R_W) {
         case RD_:
             if (memSignlas.DATA_SIZE == BYTE_) {
-                /* TODO */
+                NEXT_LATCHES.MDR = MEM(align(memSignlas.MAR));
             }
             else if (memSignlas.DATA_SIZE == WORD_) {
-                NEXT_LATCHES.MAR = MEM(memSignlas.MAR);
+                NEXT_LATCHES.MDR = MEM(memSignlas.MAR);
             }
             break;
         case WR_:
@@ -876,14 +889,101 @@ void memOperation(MEMORY_STRUCT memSignlas) {
 /**
   * Datapath routine emulating operations before driving the bus.
   * Evaluate the input of tristate drivers
-  *         Gate_MARMUX,
+  *      Gate_MARMUX,
   *		 Gate_PC,
   *		 Gate_ALU,
   *		 Gate_SHF,
   *		 Gate_MDR.
   */
 void eval_bus_drivers() {
+    GATE_INPUTS.gate_MARMUX_input =     getMARMUXoutput  (CURRENT_LATCHES);
+    GATE_INPUTS.gate_PC_input     =     getPCoutput      (CURRENT_LATCHES);
+    GATE_INPUTS.gate_ALU_input    =     getALUoutput     (CURRENT_LATCHES);
+    GATE_INPUTS.gate_SHF_input    =     getSHFoutput     (CURRENT_LATCHES);
+    GATE_INPUTS.gate_MDR_input    =     getMDRMUXoutput  (CURRENT_LATCHES);
+}
 
+int16_t getMDRMUXoutput(System_Latches curLatch) {
+    int16_t result;
+    int* microinst = curLatch.MICROINSTRUCTION;
+
+    if (bit(curLatch.MAR, 0))    result = lowByte(curLatch.MDR);        /* MDR[7:0]  */
+    else                            result = highByte(curLatch.MDR);       /* MDR[15:8] */
+
+    switch (GetDATA_SIZE(microinst)) {
+        case BYTE_:
+            if (result & 0x0080)    result = result + 0xFF00;              /* sig extend */
+            break;
+        case WORD_:
+            result = curLatch.MDR;
+            break;
+    }
+
+    return Low16bits(result);
+}
+
+int16_t getSHFoutput(System_Latches curLatch) {
+    int16_t IR, off6, result;
+    IR = curLatch.IR;
+    off6 = offset6(IR);
+
+    if (bit(off6, 4) == 0)       result = LSHFN(SR1(IR), amount4(IR));
+    else if (bit(off6, 5) == 0)  result = RSHFN(SR1(IR), amount4(IR), 0);
+    else                         result = RSHFN(SR1(IR), amount4(IR), bit(SR1(IR), 15));
+
+    return Low16bits(result);
+}
+
+int16_t getALUoutput(System_Latches curLatch) {
+    int16_t IR, ALUK, result;
+    int* microinst = curLatch.MICROINSTRUCTION;
+    IR = curLatch.IR;
+    ALUK = GetALUK(microinst);
+
+    switch (ALUK) {
+        case ADD_:
+            if (bit(IR, 5) == 0)    result = SR1(IR) + SR2(IR);
+            else                    result = SR1(IR) + SEXT(imm5(IR), 5);
+            break;
+        case AND_:
+            if (bit(IR, 5) == 0)    result = SR1(IR) & SR2(IR);
+            else                    result = SR1(IR) & SEXT(imm5(IR), 5);
+            break;
+        case XOR_:
+            if (bit(IR, 5) == 0)    result = SR1(IR) ^ SR2(IR);
+            else                    result = SR1(IR) ^ SEXT(imm5(IR), 5);
+            break;
+        case PASSA_:                result = SR1(IR);
+            break;
+    }
+
+    return Low16bits(result);
+}
+
+int16_t getPCoutput(System_Latches curLatch) {
+    return curLatch.PC;
+}
+
+int16_t getMARMUXoutput(System_Latches curLatch) {
+    int16_t IR, result, ADDER1MUX, ADDER2MUX, ADDER;
+    int* microinst = curLatch.MICROINSTRUCTION;
+    IR = curLatch.IR;
+
+    ADDER1MUX = (GetADDR1MUX(microinst) == PC_ ? curLatch.PC : SR1(IR));
+
+    switch (GetADDR2MUX(microinst)) {
+        case ZERO_:         ADDER2MUX = 0;              break;
+        case offset6_:      ADDER2MUX = offset6(IR);    break;
+        case PCoffset9_:    ADDER2MUX = PCoffset9(IR);  break;
+        case PCoffset11_:   ADDER2MUX = PCoffset11(IR); break;
+        default:            ADDER2MUX = 0;              break;
+    }
+
+    ADDER2MUX = (GetLSHF1(microinst) == YES_ ? LSHF(ADDER2MUX) : ADDER2MUX);
+    ADDER = GATE_INPUTS.ADDERoutput =  ADDER1MUX + ADDER2MUX;
+    result = (GetMARMUX(microinst) == B7_0_ ? LSHF(ZEXT8(IR)) : ADDER);
+
+    return Low16bits(result);
 }
 
 /**
@@ -891,7 +991,17 @@ void eval_bus_drivers() {
   * tristate drivers.
   */
 void drive_bus() {
+    int16_t result;
+    int* microinst = CURRENT_LATCHES.MICROINSTRUCTION;
 
+    if       (GetGATE_ALU(microinst))       result = GATE_INPUTS.gate_ALU_input;
+    else if (GetGATE_MARMUX(microinst))     result = GATE_INPUTS.gate_MARMUX_input;
+    else if (GetGATE_MDR(microinst))        result = GATE_INPUTS.gate_MDR_input;
+    else if (GetGATE_PC(microinst))         result = GATE_INPUTS.gate_PC_input;
+    else if (GetGATE_SHF(microinst))        result = GATE_INPUTS.gate_SHF_input;
+    else                                    result = BUS;
+
+    BUS = result;
 }
 
 /**
@@ -901,7 +1011,7 @@ void drive_bus() {
   * after drive_bus.
   */
 void latch_datapath_values() {
-
+    /* TODO: PC, IR, CC, MDR, MAR, REGs, BEN*/
 }
 
 void cpyMicroInst(int dst[], int src[]) {
@@ -942,23 +1052,6 @@ MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch) {
     curMem.DATA_SIZE = GetDATA_SIZE(curLatch.MICROINSTRUCTION);
 
     return curMem;
-}
-
-int16_t MEM_BYTE(uint16_t addr) {
-    int16_t result;
-
-    if (addr % 2 == 0) {
-        result = (0x00FF & MEMORY[addr/2][0]);
-
-    } else {
-        addr -= 1;
-        result = (0x00FF & MEMORY[addr/2][1]);
-    }
-
-    if (result & 0x0080)
-        result = result + 0xFF00;
-
-    return Low16bits(result);
 }
 
 void storeWordVal(uint16_t MAR, int16_t MDR) {
@@ -1349,12 +1442,13 @@ void loggingNoHeader(int num, ...) {
 }
 
 
+/*
 void process_instruction() {
 
     uint16_t i = 0xE15F;
     uint16_t j = 0x215F;
-    logging(S, "value is: ", I, RSHFN(i, 0x0003, bitVal(i, 15)), info);
-    logging(S, "value is: ", I, RSHFN(j, 5, bitVal(j, 15)), info);
+    logging(S, "value is: ", I, RSHFN(i, 0x0003, bit(i, 15)), info);
+    logging(S, "value is: ", I, RSHFN(j, 5, bit(j, 15)), info);
     logging(S, "value is: ", I, LSHFN(j, 5), info);
     logging(S, "value is: ", I, LSHFN(i, 0x0003), info);
 
@@ -1424,7 +1518,7 @@ int decodeAndExecute(int pc, enum OPCODES opcode) {
             else if (bit(pc, 5) == 0)
                 setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), 0));
             else
-                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bitVal(SR1(pc), 15)));
+                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bit(SR1(pc), 15)));
             break;
         case stb:
             storeByteValue((uint16_t) (SR1(pc) + SEXT(boffset6(pc), 6)), Low16bits((DR(pc) & 0x00FF)));
@@ -1558,3 +1652,4 @@ enum OPCODES fetch(int opcode, int pc) {
 
     return result;
 }
+*/
