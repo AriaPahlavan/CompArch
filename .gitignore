@@ -13,3 +13,7 @@ dumpsim
 */*.obj
 t
 storeNums.asm
+*/outputs/*
+*/inputs/*
+*/tests/*
+
