@@ -22,13 +22,14 @@ cleaner_script="cleaner.sh"
 tester_script="tester.sh"
 exitCode=0
 num_errors=0
+num=1
 
 printf "${blu}[INFO]${nrml} Running ${num_tests} tests... \n"
 
 for (( j = 0; j < $num_tests; j++ )); do
   i=$((j+1))
   # echo "Test ${i}:"
-  ./${exe} ${control_store} ${asm}${i}  < ${cmd}${i}${postfix} > ${output}
+  ./${exe} ${control_store} ${asm}${i}  < ${cmd}${num}${postfix} > ${output}
   temp=$?
   if [ $temp -ne 0 ]; then
     exitCode=$temp
@@ -40,7 +41,7 @@ for (( j = 0; j < $num_tests; j++ )); do
     exitCode=$temp
     printf "${red}[ERROR]${nrml} Invalid file name in cleaner. (${i})\n"
   fi
-  ./${tester_script} ${i} && printf "${grn}[PASS]${nrml} Expected value matched! (${i})\n"
+  ./${tester_script} 1 && printf "${grn}[PASS]${nrml} Expected value matched! (${i})\n"
   temp=$?
   if [ $temp -ne 0 ]; then
     exitCode=$temp
