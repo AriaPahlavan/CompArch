@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
 /**----------------------------------- Definitions ------------------------------------*/
 #define MANUAL_DEBUG        FALSE
 #define EMPTY_VAL           0
-#define LOG_LEVEL           DEBUG
+#define LOG_LEVEL           NONE
 #define MAX_LOG_DEF_ARGS    4
 #define MAX_NUM_OPCODES     29
 #define nibble              4
@@ -616,13 +616,14 @@ int main(int argc, char *argv[]) {
 #define amount4(IR)         (IR & 0x000F)
 #define imm5(IR)            (IR & 0x001F)
 #define boffset6(IR)        (IR & 0x003F)
-#define offset6(IR)         (IR & 0x003F)
-#define PCoffset9(IR)       (IR & 0x01FF)
-#define PCoffset11(IR)      (IR & 0x07FF)
-#define getPCoffset9(IR, PC)    Low16bits((incrmntdPC(PC) + LSHF(SEXT(PCoffset9(IR), 9))))
+#define offset6(IR)         SEXT( (IR & 0x003F), 6 )
+#define PCoffset9(IR)       SEXT( (IR & 0x01FF), 9 )
+#define PCoffset11(IR)      SEXT( (IR & 0x07FF), 11 )
 /*---------------------------------------------------------------------------------*/
 #define low3bits(BEN, R, IR11) (((BEN << 2) + (R << 1) + IR11) & 0x0007)
 #define align(addr) (addr & 0xFFFE)
+#define STB_MDR(val) Low16bits( (lowByte(val) << 2*nibble) + lowByte(val) )
+#define IR15_12(IR) Low16bits( ((IR & 0xF000) >> 3*nibble) & 0x000F )
 /* R.W */
     #define RD_         0
     #define WR_         1
@@ -671,14 +672,6 @@ int main(int argc, char *argv[]) {
 
 
 /**-------------------------------- Structures & Enums --------------------------------*/
-typedef struct MEMORY_EMULATOR_STRUCTURE{
-    int MAR,
-            MDR,
-            R,
-            MIO_EN,
-            R_W,
-            DATA_SIZE;
-} MEMORY_STRUCT;
 typedef struct TRISTATE_GATES_STRUCTURE{
     int gate_MARMUX_input,
          gate_PC_input,
@@ -686,7 +679,7 @@ typedef struct TRISTATE_GATES_STRUCTURE{
          gate_SHF_input,
          gate_MDR_input;
 
-    int16_t  ADDERoutput;
+    int16_t  ADDR;
 } GATES_STRUCT;
 enum DATA_TYPE {
     CUR_LATCH,
@@ -790,13 +783,11 @@ int getBranchStatus(int cond, int BEN);
 
 void cpyMicroInst(int dst[], int src[]);
 
-MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch);
-
 void storeWordVal(uint16_t MAR, int16_t MDR);
 
 void storeByteValue(uint16_t MAR, int16_t MDR);
 
-void memOperation(MEMORY_STRUCT memSignlas);
+void memOperation();
 
 int16_t getMARMUXoutput(System_Latches curLatch);
 
@@ -808,22 +799,60 @@ int16_t getSHFoutput(System_Latches curLatch);
 
 int16_t getMDRMUXoutput(System_Latches curLatch);
 
+void updatePC(System_Latches curLatch);
+
+void setCC();
+
+void updateREG(System_Latches curLatch);
+
+void updateMDR(System_Latches curLatch);
+
+void updateBEN();
+
+void updateIR();
+
+void updateMAR();
+
+
 /**-------------------------------- Function Definitions ------------------------------*/
 /**
  * Evaluate the address of the next state according to the
  * micro sequencer logic. Latch the next microinstruction.
  */
 void eval_micro_sequencer() {
+/*
+	if (CURRENT_LATCHES.STATE_NUMBER == 18 || CURRENT_LATCHES.STATE_NUMBER == 19){
+*/
+		if (CYCLE_COUNT >= 34){
+		int k;
+		printf("N = %d,\t Z = %d,\t P = %d"
+				       "\nCUR STATE = %d, \tPC = 0x%.4X, BUS = 0x%.4X, \tIR = 0x%.4X, \tBEN = %d"
+				       "\nMAR = 0x%.4X, \tMDR = 0x%.4X, \tREADY = %d\n",
+		       NEXT_LATCHES.N, NEXT_LATCHES.Z, NEXT_LATCHES.P,
+		       CURRENT_LATCHES.STATE_NUMBER, NEXT_LATCHES.PC, BUS, NEXT_LATCHES.IR, NEXT_LATCHES.BEN,
+		       NEXT_LATCHES.MAR, NEXT_LATCHES.MDR, NEXT_LATCHES.READY
+		);
+		for (k = 0; k < LC_3b_REGS; k++) {
+			printf("R%d: 0x%.4X \t ", k, NEXT_LATCHES.REGS[k]);
+			if (k == 3) printf("\n");
+		}
+		printf("\n+----------------------------------------------------------------------------+\n");
+		printf("|                                      (Cycle: %d)                             |\n", (CYCLE_COUNT + 1));
+		printf("+----------------------------------------------------------------------------+\n");
+	}
+
     logging(CUR_LATCH, &CURRENT_LATCHES, debug);
-    int COND, readyStatus, addrModeStatus, branchStatus, nextStateAddr, J;
 
-    J = GetJ(CURRENT_LATCHES.MICROINSTRUCTION);
-    COND = GetCOND(CURRENT_LATCHES.MICROINSTRUCTION);
-    readyStatus = getReadyStatus(COND, CURRENT_LATCHES.READY);
-    addrModeStatus = getAddrModeStatus(COND, bit(CURRENT_LATCHES.IR, 11));
-    branchStatus = getBranchStatus(COND, CURRENT_LATCHES.BEN);
+    int     J =                 GetJ(CURRENT_LATCHES.MICROINSTRUCTION),
+            COND =              GetCOND(CURRENT_LATCHES.MICROINSTRUCTION),
+		    IRD =               GetIRD(CURRENT_LATCHES.MICROINSTRUCTION),
+		    IR =                CURRENT_LATCHES.IR,
+            readyStatus =       getReadyStatus(COND, CURRENT_LATCHES.READY),
+            addrModeStatus =    getAddrModeStatus(COND, bit(CURRENT_LATCHES.IR, 11)),
+            branchStatus =      getBranchStatus(COND, CURRENT_LATCHES.BEN),
+            nextStateAddr =     (IRD == YES_ ? IR15_12(IR)
+                                             : Low16bits(J | low3bits(branchStatus, readyStatus, addrModeStatus)));
 
-    nextStateAddr = Low16bits(J | low3bits(branchStatus, readyStatus, addrModeStatus));
     loggingNoHeader(S, "Next state address: ", I, nextStateAddr, debug);
 
     NEXT_LATCHES.STATE_NUMBER = nextStateAddr;
@@ -840,14 +869,15 @@ void eval_micro_sequencer() {
   * cycle to prepare microsequencer for the fifth cycle.
   */
 void cycle_memory() {
-    int MIO = GetMIO_EN(CURRENT_LATCHES.MICROINSTRUCTION);
-    MEMORY_STRUCT curMem = dupMem(CURRENT_LATCHES);
+    int MIO, R;
+    MIO = GetMIO_EN(CURRENT_LATCHES.MICROINSTRUCTION);
+    R = CURRENT_LATCHES.READY;
 
-    if (curMem.R == (MEM_CYCLES - 1)) {
-        memOperation(curMem);
+    if (R == (MEM_CYCLES - 1)) {
+        memOperation();
         NEXT_LATCHES.READY = 0;
     }
-    else if (MIO == YES_) NEXT_LATCHES.READY = curMem.R + 1;
+    else if (MIO == YES_) NEXT_LATCHES.READY = R + 1;
 }
 
 /**
@@ -856,32 +886,39 @@ void cycle_memory() {
  * @param nextLatch
  * @param memSignlas
  */
-void memOperation(MEMORY_STRUCT memSignlas) {
+void memOperation() {
+    int*    microinst = CURRENT_LATCHES.MICROINSTRUCTION;
+    int     MIO_EN = GetMIO_EN(microinst),
+            R_W = GetR_W(microinst),
+            MDR = CURRENT_LATCHES.MDR,
+            MAR = CURRENT_LATCHES.MAR,
+            DATA_SIZE = GetDATA_SIZE(microinst);
 
-    if (memSignlas.MIO_EN == NO_) {
+
+    if (MIO_EN == NO_) {
         loggingMsg("Memory operation terminated since MIO.EN is not enables.", error);
         return;
     }
 
-    switch (memSignlas.R_W) {
+    switch (R_W) {
         case RD_:
-            if (memSignlas.DATA_SIZE == BYTE_) {
-                NEXT_LATCHES.MDR = MEM(align(memSignlas.MAR));
+            if (DATA_SIZE == BYTE_) {
+                CURRENT_LATCHES.MDR = MEM(align(MAR));
             }
-            else if (memSignlas.DATA_SIZE == WORD_) {
-                NEXT_LATCHES.MDR = MEM(memSignlas.MAR);
+            else if (DATA_SIZE == WORD_) {
+                CURRENT_LATCHES.MDR = MEM(MAR);
             }
             break;
         case WR_:
-            if (memSignlas.DATA_SIZE == BYTE_) {
-                /* TODO */
+            if (DATA_SIZE == BYTE_) {
+                storeByteValue((uint16_t) MAR, MDR);
             }
-            else if (memSignlas.DATA_SIZE == WORD_) {
-                storeWordVal((uint16_t) memSignlas.MAR, memSignlas.MDR);
+            else if (DATA_SIZE == WORD_) {
+                storeWordVal((uint16_t) MAR, MDR);
             }
             break;
         default:
-            logging(S, "Invalid R.W detected: ", I, memSignlas.R_W, error);
+            logging(S, "Invalid R.W detected: ", I, R_W, error);
             break;
     }
 }
@@ -903,12 +940,168 @@ void eval_bus_drivers() {
     GATE_INPUTS.gate_MDR_input    =     getMDRMUXoutput  (CURRENT_LATCHES);
 }
 
+/**
+  * Datapath routine for driving the bus from one of the 5 possible
+  * tristate drivers.
+  */
+void drive_bus() {
+    int16_t result;
+    int* microinst = CURRENT_LATCHES.MICROINSTRUCTION;
+
+    if       (GetGATE_ALU(microinst))       result = GATE_INPUTS.gate_ALU_input;
+    else if (GetGATE_MARMUX(microinst))     result = GATE_INPUTS.gate_MARMUX_input;
+    else if (GetGATE_MDR(microinst))        result = GATE_INPUTS.gate_MDR_input;
+    else if (GetGATE_PC(microinst))         result = GATE_INPUTS.gate_PC_input;
+    else if (GetGATE_SHF(microinst))        result = GATE_INPUTS.gate_SHF_input;
+    else                                    result = 0;
+
+    BUS = Low16bits(result);
+}
+
+/**
+  * Datapath routine for computing all functions that need to latch
+  * values in the data path at the end of this cycle.  Some values
+  * require sourcing the bus; therefore, this routine has to come
+  * after drive_bus.
+  */
+void latch_datapath_values() {
+	int *microinst = CURRENT_LATCHES.MICROINSTRUCTION;
+
+	if (GetLD_PC(microinst)) updatePC(CURRENT_LATCHES);
+	if (GetLD_IR(microinst)) updateIR();
+	if (GetLD_MDR(microinst)) updateMDR(CURRENT_LATCHES);
+	if (GetLD_MAR(microinst)) updateMAR();
+	if (GetLD_BEN(microinst)) updateBEN();
+	if (GetLD_REG(microinst)) updateREG(CURRENT_LATCHES);
+	if (GetLD_CC(microinst)) setCC();
+}
+
+void updateMAR() {
+	logging(S, "Updating MAR to: ", I, Low16bits(BUS), debug);
+
+	NEXT_LATCHES.MAR = Low16bits(BUS);
+}
+
+void updateIR() {
+	logging(S, "Updating IR to: ", I, Low16bits(BUS), debug);
+
+	NEXT_LATCHES.IR = Low16bits(BUS);
+}
+
+void updateBEN() {
+	int     P = CURRENT_LATCHES.P,
+			Z = CURRENT_LATCHES.Z,
+			N = CURRENT_LATCHES.N,
+			IR = CURRENT_LATCHES.IR;
+
+	NEXT_LATCHES.BEN = (( ( (bit(IR, 11) == 1) && (N == 1) )
+	                   || ( (bit(IR, 10) == 1) && (Z == 1) )
+	                   || ( (bit(IR, 9)  == 1) && (P == 1) )) ? 1 : 0);
+
+	logging(S, "Updating BEN to: ", Id, NEXT_LATCHES.BEN,
+	        S, "\nCurrent instruction: ", Ix, NEXT_LATCHES.IR, info);
+}
+
+void updateMDR(System_Latches curLatch) {
+	int16_t DATA_SIZE, result;
+    int* microinst = curLatch.MICROINSTRUCTION;
+    DATA_SIZE = GetDATA_SIZE(microinst);
+
+    if (GetMIO_EN(microinst) == YES_)   result = curLatch.MDR;
+    else if (DATA_SIZE == BYTE_)        result = STB_MDR(BUS);
+    else if (DATA_SIZE == WORD_)        result = Low16bits(BUS);
+    else                                result = CURRENT_LATCHES.MDR;
+
+	NEXT_LATCHES.MDR = Low16bits(result);
+
+	logging(S, "Updating MDR to: ", I, result, debug);
+}
+
+void updateREG(System_Latches curLatch) {
+	logging(S, "Updating REG to: ", I, Low16bits(BUS), debug);
+
+	int DRMUX = GetDRMUX(curLatch.MICROINSTRUCTION);
+    int16_t IR = CURRENT_LATCHES.IR;
+
+    if (DRMUX == B11_9_)    NEXT_LATCHES.REGS[DR_NUM(IR)] = Low16bits(BUS);
+    else                    NEXT_LATCHES.REGS[r7] = Low16bits(BUS);
+}
+
+void setCC() {
+	logging(S, "Setting CC to N=", Id, Low16bits(BUS) < 0,
+	        S, " Z=", Id, Low16bits(BUS) == 0,
+	        S, " P=", Id, Low16bits(BUS) > 0, debug);
+
+	NEXT_LATCHES.N = (  (int16_t) BUS <  0 ? 1 : 0 );
+	NEXT_LATCHES.Z = (  (int16_t) BUS == 0 ? 1 : 0 );
+	NEXT_LATCHES.P = (  (int16_t) BUS >  0 ? 1 : 0 );
+}
+
+void updatePC(System_Latches curLatch){
+	int16_t result;
+    int* microinst = curLatch.MICROINSTRUCTION;
+
+    switch (GetPCMUX(microinst)){
+        case PCplus2_:      result = curLatch.PC + 2;       break;
+        case BUS_:          result = Low16bits(BUS);        break;
+        case ADDER_PC_:     result = GATE_INPUTS.ADDR;      break;
+	    default:            result = CURRENT_LATCHES.PC;    break;
+    }
+
+	NEXT_LATCHES.PC = result;
+
+	logging(S, "Updating PC to: ", I, result, debug);
+}
+
+void cpyMicroInst(int dst[], int src[]) {
+    int i;
+
+    for (i = 0; i < CONTROL_STORE_BITS; ++i) {
+        dst[i] = src[i];
+    }
+
+}
+
+int getBranchStatus(int cond, int BEN) {
+	if (CURRENT_LATCHES.STATE_NUMBER == 0)
+		logging(S, "Branch status checked to be: ",
+	          I, cond == 2 && BEN, info
+		);
+    return cond == 2 && BEN;
+}
+
+int getAddrModeStatus(int cond, int IR11) {
+    return cond == 3 && IR11;
+}
+
+int getReadyStatus(int cond, int R) {
+    return cond == 1 && R == (MEM_CYCLES - 1);
+}
+
+void storeWordVal(uint16_t MAR, int16_t MDR) {
+    loggingNoHeader(S, "<SW> Storing ", I, MDR, S, " into address ", I, MAR, info);
+
+    int *mem = MEMORY[MAR / 2];
+
+    mem[0] = Low16bits(MDR & 0x000000FF);
+    mem[1] = Low16bits(MDR & 0x0000FF00) >> 2*nibble;
+}
+
+void storeByteValue(uint16_t MAR, int16_t MDR) {
+    loggingNoHeader(S, "<SB> Storing ", I, MDR, S, " into address ", I, MAR, info);
+
+    int *mem = MEMORY[MAR / 2];
+
+    if      ( MAR % 2 == 0 )     mem[MAR % 2] = Low16bits(lowByte(MDR));
+    else if ( MAR % 2 == 1 )     mem[MAR % 2] = Low16bits(highByte(MDR));
+}
+
 int16_t getMDRMUXoutput(System_Latches curLatch) {
     int16_t result;
     int* microinst = curLatch.MICROINSTRUCTION;
 
-    if (bit(curLatch.MAR, 0))    result = lowByte(curLatch.MDR);        /* MDR[7:0]  */
-    else                            result = highByte(curLatch.MDR);       /* MDR[15:8] */
+    if (bit(curLatch.MAR, 0) == 0)	    result = lowByte(curLatch.MDR);        /* MDR[7:0]  */
+    else                                result = highByte(curLatch.MDR);       /* MDR[15:8] */
 
     switch (GetDATA_SIZE(microinst)) {
         case BYTE_:
@@ -919,49 +1112,63 @@ int16_t getMDRMUXoutput(System_Latches curLatch) {
             break;
     }
 
-    return Low16bits(result);
+	logging(S, "Updating MDRMUX output to: ", I, Low16bits(result), debug);
+
+	return Low16bits(result);
 }
 
 int16_t getSHFoutput(System_Latches curLatch) {
-    int16_t IR, off6, result;
+    int16_t IR, off6, result, SR1;
     IR = curLatch.IR;
-    off6 = offset6(IR);
+    off6 = boffset6(IR);
+    SR1 = (GetSR1MUX(curLatch.MICROINSTRUCTION) == B11_9_ ? DR(IR) : SR1(IR));
 
-    if (bit(off6, 4) == 0)       result = LSHFN(SR1(IR), amount4(IR));
-    else if (bit(off6, 5) == 0)  result = RSHFN(SR1(IR), amount4(IR), 0);
-    else                         result = RSHFN(SR1(IR), amount4(IR), bit(SR1(IR), 15));
+    if (bit(off6, 4) == 0)       result = LSHFN(SR1, amount4(IR));
+    else if (bit(off6, 5) == 0)  result = RSHFN(SR1, amount4(IR), 0);
+    else                         result = RSHFN(SR1, amount4(IR), bit(SR1, 15));
 
-    return Low16bits(result);
+	logging(S, "Updating SHF output to: ", I, Low16bits(result), debug);
+
+	return Low16bits(result);
 }
 
 int16_t getALUoutput(System_Latches curLatch) {
-    int16_t IR, ALUK, result;
+    int16_t IR, ALUK, result, SR1;
     int* microinst = curLatch.MICROINSTRUCTION;
     IR = curLatch.IR;
     ALUK = GetALUK(microinst);
+    SR1 = (GetSR1MUX(microinst) == B11_9_ ? DR(IR) : SR1(IR));
 
     switch (ALUK) {
         case ADD_:
-            if (bit(IR, 5) == 0)    result = SR1(IR) + SR2(IR);
-            else                    result = SR1(IR) + SEXT(imm5(IR), 5);
+            if (bit(IR, 5) == 0)    result = SR1 + SR2(IR);
+            else                    result = SR1 + SEXT(imm5(IR), 5);
             break;
         case AND_:
-            if (bit(IR, 5) == 0)    result = SR1(IR) & SR2(IR);
-            else                    result = SR1(IR) & SEXT(imm5(IR), 5);
+            if (bit(IR, 5) == 0)    result = SR1 & SR2(IR);
+            else                    result = SR1 & SEXT(imm5(IR), 5);
             break;
         case XOR_:
-            if (bit(IR, 5) == 0)    result = SR1(IR) ^ SR2(IR);
-            else                    result = SR1(IR) ^ SEXT(imm5(IR), 5);
+            if (bit(IR, 5) == 0)    result = SR1 ^ SR2(IR);
+            else                    result = SR1 ^ SEXT(imm5(IR), 5);
             break;
-        case PASSA_:                result = SR1(IR);
+        case PASSA_:                result = SR1;
             break;
+	    default:
+		                            result = 0;
+		    logging(S, "Ivalid ALUK MUX signal", error);
+		    break;
     }
 
-    return Low16bits(result);
+	logging(S, "Updating ALU output to: ", I, Low16bits(result), debug);
+
+	return Low16bits(result);
 }
 
 int16_t getPCoutput(System_Latches curLatch) {
-    return curLatch.PC;
+	logging(S, "Updating PC output to: ", I, Low16bits(curLatch.PC), debug);
+
+	return curLatch.PC;
 }
 
 int16_t getMARMUXoutput(System_Latches curLatch) {
@@ -980,94 +1187,12 @@ int16_t getMARMUXoutput(System_Latches curLatch) {
     }
 
     ADDER2MUX = (GetLSHF1(microinst) == YES_ ? LSHF(ADDER2MUX) : ADDER2MUX);
-    ADDER = GATE_INPUTS.ADDERoutput =  ADDER1MUX + ADDER2MUX;
+    ADDER = GATE_INPUTS.ADDR =  ADDER1MUX + ADDER2MUX;
     result = (GetMARMUX(microinst) == B7_0_ ? LSHF(ZEXT8(IR)) : ADDER);
 
-    return Low16bits(result);
-}
+	logging(S, "Updating MARMUX output to: ", I, Low16bits(result), debug);
 
-/**
-  * Datapath routine for driving the bus from one of the 5 possible
-  * tristate drivers.
-  */
-void drive_bus() {
-    int16_t result;
-    int* microinst = CURRENT_LATCHES.MICROINSTRUCTION;
-
-    if       (GetGATE_ALU(microinst))       result = GATE_INPUTS.gate_ALU_input;
-    else if (GetGATE_MARMUX(microinst))     result = GATE_INPUTS.gate_MARMUX_input;
-    else if (GetGATE_MDR(microinst))        result = GATE_INPUTS.gate_MDR_input;
-    else if (GetGATE_PC(microinst))         result = GATE_INPUTS.gate_PC_input;
-    else if (GetGATE_SHF(microinst))        result = GATE_INPUTS.gate_SHF_input;
-    else                                    result = BUS;
-
-    BUS = result;
-}
-
-/**
-  * Datapath routine for computing all functions that need to latch
-  * values in the data path at the end of this cycle.  Some values
-  * require sourcing the bus; therefore, this routine has to come
-  * after drive_bus.
-  */
-void latch_datapath_values() {
-    /* TODO: PC, IR, CC, MDR, MAR, REGs, BEN*/
-}
-
-void cpyMicroInst(int dst[], int src[]) {
-    int i;
-
-    for (i = 0; i < CONTROL_STORE_BITS; ++i) {
-        dst[i] = src[i];
-    }
-
-}
-
-int getBranchStatus(int cond, int BEN) {
-    return cond == 2 && BEN;
-}
-
-int getAddrModeStatus(int cond, int IR11) {
-    return cond == 3 && IR11;
-}
-
-int getReadyStatus(int cond, int R) {
-    return cond == 1 && R == (MEM_CYCLES - 1);
-}
-
-/**
- * creates a memory structure copy based on signals in current microinstruction and latches
- *
- * @param curLatch
- * @return
- */
-MEMORY_STRUCT dupMem(struct System_Latches_Struct curLatch) {
-    MEMORY_STRUCT curMem;
-
-    curMem.R = curLatch.READY;
-    curMem.MAR = curLatch.MAR;
-    curMem.MDR = curLatch.MDR;
-    curMem.MIO_EN = GetMIO_EN(curLatch.MICROINSTRUCTION);
-    curMem.R_W = GetR_W(curLatch.MICROINSTRUCTION);
-    curMem.DATA_SIZE = GetDATA_SIZE(curLatch.MICROINSTRUCTION);
-
-    return curMem;
-}
-
-void storeWordVal(uint16_t MAR, int16_t MDR) {
-    loggingNoHeader(S, "<SW> Storing ", I, MDR, S, " into address ", I, MAR, info);
-
-    int *mem = MEMORY[MAR / 2];
-
-    mem[0] = Low16bits(MDR & 0x000000FF);
-    mem[1] = Low16bits(MDR & 0x0000FF00) >> 2*nibble;
-}
-
-void storeByteValue(uint16_t MAR, int16_t MDR) {
-    loggingNoHeader(S, "<SB> Storing ", I, MDR, S, " into address ", I, MAR, info);
-    int *mem = MEMORY[MAR / 2];
-
-    mem[MAR % 2] = Low16bits(MDR & 0x00FF);
+	return Low16bits(result);
 }
 
 
@@ -1140,7 +1265,6 @@ void output(void *V, enum DATA_TYPE Type) {
                     printf("R%d: 0x%.4X  ", k, CURRENT_LATCHES.REGS[k]);
                     if (k == 3) printf("\n");
                 }
-
             }
             break;
         case MICROINST:
@@ -1440,216 +1564,3 @@ void loggingNoHeader(int num, ...) {
     va_end(valist);
 
 }
-
-
-/*
-void process_instruction() {
-
-    uint16_t i = 0xE15F;
-    uint16_t j = 0x215F;
-    logging(S, "value is: ", I, RSHFN(i, 0x0003, bit(i, 15)), info);
-    logging(S, "value is: ", I, RSHFN(j, 5, bit(j, 15)), info);
-    logging(S, "value is: ", I, LSHFN(j, 5), info);
-    logging(S, "value is: ", I, LSHFN(i, 0x0003), info);
-
-
-    static int instruction_num = 0;
-    logging(S, "Simulating instruction #", Id, instruction_num++, info);
-
-    int pc = CURRENT_LATCHES.PC, next_pc;
-    setupNextLatch();
-    loggingNoHeader(STAT, &CURRENT_LATCHES, N,
-                    S, "current instruction: ", ADDR, pc, debug);
-
-    enum OPCODES opcode = fetch(nibble4(pc), pc);
-
-
-    next_pc = decodeAndExecute(pc, opcode);
-
-
-    NEXT_LATCHES.PC = next_pc;
-
-loggingMsgNoHeader(AGRN"PASS: "ANRM"simulation is done.", info);
-
-}
-
-
-void setupNextLatch() {
-    int i;
-    NEXT_LATCHES.PC = CURRENT_LATCHES.PC + 2;
-    NEXT_LATCHES.P = CURRENT_LATCHES.P;
-    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
-    NEXT_LATCHES.N = CURRENT_LATCHES.N;
-    for(i=0; i < LC_3b_REGS; i++)
-        NEXT_LATCHES.REGS[i]=CURRENT_LATCHES.REGS[i];
-}
-
-
-int decodeAndExecute(int pc, enum OPCODES opcode) {
-    int next_pc = pc + 2;
-    int16_t val;
-
-    switch (opcode) {
-        case add:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), SR1(pc) + SR2(pc));
-            else
-                setRegWithCC(DR_NUM(pc), SR1(pc) + SEXT(imm5(pc), 5));
-            break;
-        case and:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), SR1(pc) & SR2(pc));
-            else
-                setRegWithCC(DR_NUM(pc), SR1(pc) & SEXT(imm5(pc), 5));
-            break;
-        case ldb:
-            val = SR1(pc) + SEXT(boffset6(pc), 6);
-            setRegWithCC(DR_NUM(pc), SEXT(MEM_BYTE(val), 9));
-            break;
-        case ldw:
-            val = SR1(pc) + LSHF(SEXT(offset6(pc), 6));
-            setRegWithCC(DR_NUM(pc), MEM(val));
-            break;
-        case lshf:
-        case rshfl:
-        case rshfa:
-            if (bit(pc, 4) == 0)
-                setRegWithCC(DR_NUM(pc), LSHFN(SR1(pc), amount4(pc)));
-            else if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), 0));
-            else
-                setRegWithCC(DR_NUM(pc), RSHFN(SR1(pc), amount4(pc), bit(SR1(pc), 15)));
-            break;
-        case stb:
-            storeByteValue((uint16_t) (SR1(pc) + SEXT(boffset6(pc), 6)), Low16bits((DR(pc) & 0x00FF)));
-            break;
-        case stw:
-            storeWordVal((uint16_t) (SR1(pc) + LSHF(SEXT(offset6(pc), 6))), Low16bits(DR(pc)));
-            break;
-        case not:
-        case xor:
-            if (bit(pc, 5) == 0)
-                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SR2(pc)));
-            else
-                setRegWithCC(DR_NUM(pc), (SR1(pc) ^ SEXT(imm5(pc), 5)));
-            break;
-        case brn:
-            if (CURRENT_LATCHES.N == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brp:
-            if (CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brnp:
-            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brz:
-            if (CURRENT_LATCHES.Z == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brnz:
-            if (CURRENT_LATCHES.N == TRUE || CURRENT_LATCHES.Z == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case brzp:
-            if (CURRENT_LATCHES.Z == TRUE || CURRENT_LATCHES.P == TRUE)
-                next_pc = getPCoffset9(pc);
-            break;
-        case br:
-        case brnzp:
-            next_pc = getPCoffset9(pc);
-            break;
-        case rti:
-            break;
-        case ret:
-        case jmp:
-            next_pc = Low16bits(SR1(pc));
-            break;
-        case jsrr:
-        case jsr:
-            if (TRUE) {
-                int16_t temp = Low16bits(incrmntdPC(pc));
-                if (bit(pc, 11) == 0) {
-                    next_pc = Low16bits(SR1(pc));
-
-                } else {
-                    next_pc = Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset11(pc), 11)));
-                }
-                NEXT_LATCHES.REGS[r7] = temp;
-            }
-            break;
-        case lea:
-            NEXT_LATCHES.REGS[DR_NUM(pc)] =
-                    Low16bits(incrmntdPC(pc) + LSHF(SEXT(PCoffset9(pc), 9)));
-            break;
-        case trap:
-        case halt:
-            NEXT_LATCHES.REGS[r7] = Low16bits(incrmntdPC(pc));
-            next_pc = MEM(LSHF(ZEXT8(pc)));
-            break;
-        case nop:
-            processNop();
-            break;
-        default:
-            break;
-    }
-    return next_pc;
-}
-
-
-void setRegWithCC(int16_t reg, int16_t val) {
-    if (val > 0) NEXT_LATCHES.P = TRUE;
-    else NEXT_LATCHES.P = FALSE;
-
-    if (val == 0) NEXT_LATCHES.Z = TRUE;
-    else NEXT_LATCHES.Z = FALSE;
-
-    if (val < 0) NEXT_LATCHES.N = TRUE;
-    else NEXT_LATCHES.N = FALSE;
-
-    NEXT_LATCHES.REGS[reg] = Low16bits(val);
-}
-
-
-void processNop() {
-    int k;
-    NEXT_LATCHES.N = CURRENT_LATCHES.N;
-    NEXT_LATCHES.Z = CURRENT_LATCHES.Z;
-    NEXT_LATCHES.P = CURRENT_LATCHES.P;
-    for (k = 0; k < LC_3b_REGS; k++)
-        NEXT_LATCHES.REGS[k] = CURRENT_LATCHES.REGS[k];
-}
-
-
-enum OPCODES fetch(int opcode, int pc) {
-    loggingNoHeader(S, "finding opcode for ", Ix, opcode, debug);
-
-    int j;
-    enum OPCODES result = fill;
-
-    for (j = 0; j < MAX_NUM_OPCODES; ++j)
-        if (opcode == opcodes[j] << 3 * nibble)
-            result = opcodeEnum[j];
-    if (opcode == 0) {
-        if (adjArgOne(4) == arg1(pc)) result = brn;
-        else if (adjArgOne(1) == arg1(pc)) result = brp;
-        else if (adjArgOne(5) == arg1(pc)) result = brnp;
-        else if (adjArgOne(2) == arg1(pc)) result = brz;
-        else if (adjArgOne(6) == arg1(pc)) result = brnz;
-        else if (adjArgOne(3) == arg1(pc)) result = brzp;
-        else if (adjArgOne(7) == arg1(pc)) result = br;
-        else if (MEM(pc) == opcodes[nop]) result = nop;
-        else {
-            loggingMsg("Invalid instruction.", error);
-            exit(4);
-        }
-    }
-
-    loggingNoHeader(S, "Value ", Ix, opcode, S, " is for opcode ",
-                    S, lowerOpcodes[result], info);
-
-    return result;
-}
-*/
