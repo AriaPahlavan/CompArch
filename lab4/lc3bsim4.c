@@ -627,7 +627,7 @@ int main(int argc, char *argv[]) {
 /**----------------------------------- Definitions ------------------------------------*/
 #define MANUAL_DEBUG        FALSE
 #define EMPTY_VAL           0
-#define LOG_LEVEL           DEBUG
+#define LOG_LEVEL           INFO
 #define MAX_LOG_DEF_ARGS    4
 #define nibble              4
 #define debug               EOL, __FUNCTION__, __LINE__, DEBUG
