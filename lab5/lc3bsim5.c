@@ -1,8 +1,13 @@
+/*
+    Name 1: Aria Pahlavan
+    UTEID 1: ap44342
+*/
+
 /***************************************************************/
 /*                                                             */
 /*   LC-3b Simulator                                           */
 /*                                                             */
-/*   EE 460N                                                   */
+/*   EE 460N - Lab 5                                           */
 /*   The University of Texas at Austin                         */
 /*                                                             */
 /***************************************************************/
@@ -14,6 +19,7 @@
 /***************************************************************/
 /*                                                             */
 /* Files:  ucode        Microprogram file                      */
+/*         pagetable    page table in LC-3b machine language   */
 /*         isaprogram   LC-3b machine language program file    */
 /*                                                             */
 /***************************************************************/
@@ -154,7 +160,7 @@ int CONTROL_STORE[CONTROL_STORE_ROWS][CONTROL_STORE_BITS];
    the least significant byte of a word. WE1 is used for the most significant
    byte of a word. */
 
-#define WORDS_IN_MEM    0x08000
+#define WORDS_IN_MEM    0x2000 /* 32 frames */
 #define MEM_CYCLES      5
 int MEMORY[WORDS_IN_MEM][2];
 
@@ -173,13 +179,13 @@ int BUS;	/* value of the bus */
 typedef struct System_Latches_Struct{
 
 	int PC,		/* program counter */
-	    MDR,	/* memory data register */
-	    MAR,	/* memory address register */
-	    IR,		/* instruction register */
-	    N,		/* n condition bit */
-	    Z,		/* z condition bit */
-	    P,		/* p condition bit */
-	    BEN;        /* ben register */
+			MDR,	/* memory data register */
+			MAR,	/* memory address register */
+			IR,		/* instruction register */
+			N,		/* n condition bit */
+			Z,		/* z condition bit */
+			P,		/* p condition bit */
+			BEN;        /* ben register */
 
 	int READY;	/* ready bit */
 	/* The ready bit is also latched as you dont want the memory system to assert it
@@ -195,18 +201,30 @@ typedef struct System_Latches_Struct{
 	int INTV; /* Interrupt vector register */
 	int EXCV; /* Exception vector register */
 	int SSP; /* Initial value of system stack pointer */
-/* MODIFY: You may add system latches that are required by your implementation */
+/* MODIFY: you should add here any other registers you need to implement interrupts and exceptions */
 	int USP;
 	int PSR;
 	int INT;
 	int Priv;
 	int Vector;
 	int TEMP; /* specifies whether coming from LD/ST or state 18/19*/
+
+/* For lab 5 */
+	int PTBR; /* This is initialized when we load the page table */
+	int VA;   /* Temporary VA register */
+/* MODIFY: you should add here any other registers you need to implement virtual memory */
+
 } System_Latches;
 
 /* Data Structure for Latch */
 
 System_Latches CURRENT_LATCHES, NEXT_LATCHES;
+
+/* For lab 5 */
+#define PAGE_NUM_BITS 9
+#define PTE_PFN_MASK 0x3E00
+#define PTE_VALID_MASK 0x0004
+#define PAGE_OFFSET_MASK 0x1FF
 
 /***************************************************************/
 /* A cycle counter.                                            */
@@ -498,9 +516,9 @@ void init_memory() {
 /* Purpose   : Load program and service routines into mem.    */
 /*                                                            */
 /**************************************************************/
-void load_program(char *program_filename) {
+void load_program(char *program_filename, int is_virtual_base) {
 	FILE * prog;
-	int ii, word, program_base;
+	int ii, word, program_base, pte, virtual_pc;
 
 	/* Open program file. */
 	prog = fopen(program_filename, "r");
@@ -517,6 +535,32 @@ void load_program(char *program_filename) {
 		exit(-1);
 	}
 
+	if (is_virtual_base) {
+		if (CURRENT_LATCHES.PTBR == 0) {
+			printf("Error: Page table base not loaded %s\n", program_filename);
+			exit(-1);
+		}
+
+		/* convert virtual_base to physical_base */
+		virtual_pc = program_base << 1;
+		pte = (MEMORY[(CURRENT_LATCHES.PTBR + (((program_base << 1) >> PAGE_NUM_BITS) << 1)) >> 1][1] << 8) |
+		      MEMORY[(CURRENT_LATCHES.PTBR + (((program_base << 1) >> PAGE_NUM_BITS) << 1)) >> 1][0];
+
+		printf("virtual base of program: %04x\npte: %04x\n", program_base << 1, pte);
+		if ((pte & PTE_VALID_MASK) == PTE_VALID_MASK) {
+			program_base = (pte & PTE_PFN_MASK) | ((program_base << 1) & PAGE_OFFSET_MASK);
+			printf("physical base of program: %x\n\n", program_base);
+			program_base = program_base >> 1;
+		} else {
+			printf("attempting to load a program into an invalid (non-resident) page\n\n");
+			exit(-1);
+		}
+	}
+	else {
+		/* is page table */
+		CURRENT_LATCHES.PTBR = program_base << 1;
+	}
+
 	ii = 0;
 	while (fscanf(prog, "%x\n", &word) != EOF) {
 		/* Make sure it fits. */
@@ -528,11 +572,12 @@ void load_program(char *program_filename) {
 
 		/* Write the word to memory array. */
 		MEMORY[program_base + ii][0] = word & 0x00FF;
-		MEMORY[program_base + ii][1] = (word >> 8) & 0x00FF;
+		MEMORY[program_base + ii][1] = (word >> 8) & 0x00FF;;
 		ii++;
 	}
 
-	if (CURRENT_LATCHES.PC == 0) CURRENT_LATCHES.PC = (program_base << 1);
+	if (CURRENT_LATCHES.PC == 0 && is_virtual_base)
+		CURRENT_LATCHES.PC = virtual_pc;
 
 	printf("Read %d words from program into memory.\n\n", ii);
 }
@@ -542,24 +587,27 @@ void load_program(char *program_filename) {
 /* Procedure : initialize                                      */
 /*                                                             */
 /* Purpose   : Load microprogram and machine language program  */
-/*             and set up initial state of the machine.        */
+/*             and set up initial state of the machine         */
 /*                                                             */
 /***************************************************************/
-void initialize(char *ucode_filename, char *program_filename, int num_prog_files) {
+void initialize(char *ucode_filename, char *pagetable_filename, char *program_filename, int num_prog_files) {
 	int i;
 	init_control_store(ucode_filename);
 
 	init_memory();
+	load_program(pagetable_filename,0);
 	for ( i = 0; i < num_prog_files; i++ ) {
-		load_program(program_filename);
+		load_program(program_filename,1);
 		while(*program_filename++ != '\0');
 	}
 	CURRENT_LATCHES.Z = 1;
-	CURRENT_LATCHES.PSR = 0x8002;
-	CURRENT_LATCHES.Priv = 0x0001;
 	CURRENT_LATCHES.STATE_NUMBER = INITIAL_STATE_NUMBER;
 	memcpy(CURRENT_LATCHES.MICROINSTRUCTION, CONTROL_STORE[INITIAL_STATE_NUMBER], sizeof(int)*CONTROL_STORE_BITS);
 	CURRENT_LATCHES.SSP = 0x3000; /* Initial value of system stack pointer */
+
+/* MODIFY: you can add more initialization code HERE */
+	CURRENT_LATCHES.PSR = 0x8002;
+	CURRENT_LATCHES.Priv = 0x0001;
 
 	NEXT_LATCHES = CURRENT_LATCHES;
 
@@ -575,15 +623,15 @@ int main(int argc, char *argv[]) {
 	FILE * dumpsim_file;
 
 	/* Error Checking */
-	if (argc < 3) {
-		printf("Error: usage: %s <micro_code_file> <program_file_1> <program_file_2> ...\n",
+	if (argc < 4) {
+		printf("Error: usage: %s <micro_code_file> <page table file> <program_file_1> <program_file_2> ...\n",
 		       argv[0]);
 		exit(1);
 	}
 
 	printf("LC-3b Simulator\n\n");
 
-	initialize(argv[1], argv[2], argc - 2);
+	initialize(argv[1], argv[2], argv[3], argc - 3);
 
 	if ( (dumpsim_file = fopen( "dumpsim", "w" )) == NULL ) {
 		printf("Error: Can't open dumpsim file\n");
@@ -598,9 +646,6 @@ int main(int argc, char *argv[]) {
 /***************************************************************/
 /* Do not modify the above code, except for the places indicated
    with a "MODIFY:" comment.
-
-   Do not modify the rdump and mdump functions.
-
    You are allowed to use the following global variables in your
    code. These are defined above.
 
@@ -756,14 +801,14 @@ int main(int argc, char *argv[]) {
 /**-------------------------------- Structures & Enums --------------------------------*/
 typedef struct TRISTATE_GATES_STRUCTURE{
 	int gate_MARMUX_input,
-	    gate_PC_input,
-	    gate_ALU_input,
-	    gate_SHF_input,
-	    gate_MDR_input,
-		gate_SP_input,
-		gate_PSR_input,
-		gate_VECTOR_input,
-		gate_PC_DEC_input;
+			gate_PC_input,
+			gate_ALU_input,
+			gate_SHF_input,
+			gate_MDR_input,
+			gate_SP_input,
+			gate_PSR_input,
+			gate_VECTOR_input,
+			gate_PC_DEC_input;
 
 	int16_t  ADDR;
 } GATES_STRUCT;
@@ -921,39 +966,39 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 	}
 
 	int     IR             = CURRENT_LATCHES.IR,
-	        MAR            = CURRENT_LATCHES.MAR,
+			MAR            = CURRENT_LATCHES.MAR,
 			INT            = CURRENT_LATCHES.INT,
 			Priv           = CURRENT_LATCHES.Priv,
 			TEMP           = CURRENT_LATCHES.TEMP,
 
 			J              = GetJ              (CURRENT_LATCHES.MICROINSTRUCTION),
-	        COND           = GetCOND           (CURRENT_LATCHES.MICROINSTRUCTION),
-	        IRD            = GetIRD            (CURRENT_LATCHES.MICROINSTRUCTION),
+			COND           = GetCOND           (CURRENT_LATCHES.MICROINSTRUCTION),
+			IRD            = GetIRD            (CURRENT_LATCHES.MICROINSTRUCTION),
 			LDST           = GetLDST           (CURRENT_LATCHES.MICROINSTRUCTION),
 
-	        readyStatus    = isReady(COND, CURRENT_LATCHES.READY),
-	        branchStatus   = isBranch(COND, CURRENT_LATCHES.BEN),
-	        addrModeStatus = isJsrAddrMode(COND, bit(IR, 11)),
-	        privStatus     = isPrivViolated(COND, Priv, (MAR < 0x3000)),
+			readyStatus    = isReady(COND, CURRENT_LATCHES.READY),
+			branchStatus   = isBranch(COND, CURRENT_LATCHES.BEN),
+			addrModeStatus = isJsrAddrMode(COND, bit(IR, 11)),
+			privStatus     = isPrivViolated(COND, Priv, (MAR < 0x3000)),
 			interrupted    = isInterrupted(COND, INT, Priv),
 			unalignedAcc   = isUnalignedAcces(COND, bit(IR, 14), bit(MAR, 0)),
 
 			ldstNextState  = LDST == YES_ ? LDST_IR(IR) :
 			                 LDST == NO_  ? IR15_12(IR) :
-											STATE48(TEMP),
+			                 STATE48(TEMP),
 			nextStateAddr  = (IRD == YES_ ? ldstNextState :
-				                            Low16bits(J | J5_0(branchStatus,
-				                                               readyStatus,
-				                                               addrModeStatus,
-				                                               privStatus,
-				                                               interrupted,
-				                                               unalignedAcc)));
+			                  Low16bits(J | J5_0(branchStatus,
+			                                     readyStatus,
+			                                     addrModeStatus,
+			                                     privStatus,
+			                                     interrupted,
+			                                     unalignedAcc)));
 
 	NEXT_LATCHES.STATE_NUMBER = nextStateAddr;
 	cpyMicroInst(NEXT_LATCHES.MICROINSTRUCTION, CONTROL_STORE[nextStateAddr]);
 
 	/*if (CURRENT_LATCHES.STATE_NUMBER==18)*/
-		logging(CUR_LATCH, &CURRENT_LATCHES, info);
+	logging(CUR_LATCH, &CURRENT_LATCHES, info);
 }
 
 /**
@@ -983,10 +1028,10 @@ void cycle_memory() {
 void memOperation() {
 	int*    microinst = CURRENT_LATCHES.MICROINSTRUCTION;
 	int     MIO_EN = GetMIO_EN(microinst),
-	        R_W = GetR_W(microinst),
-	        MDR = CURRENT_LATCHES.MDR,
-	        MAR = CURRENT_LATCHES.MAR,
-	        DATA_SIZE = GetDATA_SIZE(microinst);
+			R_W = GetR_W(microinst),
+			MDR = CURRENT_LATCHES.MDR,
+			MAR = CURRENT_LATCHES.MAR,
+			DATA_SIZE = GetDATA_SIZE(microinst);
 
 
 	if (MIO_EN == NO_) {
@@ -1165,9 +1210,9 @@ void updateIR() {
 
 void updateBEN() {
 	int     P = CURRENT_LATCHES.P,
-	        Z = CURRENT_LATCHES.Z,
-	        N = CURRENT_LATCHES.N,
-	        IR = CURRENT_LATCHES.IR;
+			Z = CURRENT_LATCHES.Z,
+			N = CURRENT_LATCHES.N,
+			IR = CURRENT_LATCHES.IR;
 
 	NEXT_LATCHES.BEN = (( ( (bit(IR, 11) == 1) && (N == 1) )
 	                      || ( (bit(IR, 10) == 1) && (Z == 1) )
@@ -1234,10 +1279,10 @@ void setCC() {
 	}
 
 	int PSR        = NEXT_LATCHES.PSR,
-		N          = NEXT_LATCHES.N,
-		Z          = NEXT_LATCHES.Z,
-		P          = NEXT_LATCHES.P,
-		NZP        = ((N<<2) + (Z<<1) + P) & 0x0007;
+			N          = NEXT_LATCHES.N,
+			Z          = NEXT_LATCHES.Z,
+			P          = NEXT_LATCHES.P,
+			NZP        = ((N<<2) + (Z<<1) + P) & 0x0007;
 
 	NEXT_LATCHES.PSR = Low16bits(mask(PSR, 15)+NZP);
 
@@ -1368,7 +1413,7 @@ int16_t getALUoutput(System_Latches curLatch) {
 
 	SR1 = PASS_SP         ? curLatch.REGS[r6] :
 	      SRMUX == B11_9_ ? DR(IR) :
-	                        SR1(IR);
+	      SR1(IR);
 
 	switch (ALUK) {
 		case ADD_:
@@ -1448,10 +1493,10 @@ int16_t getSPoutput(System_Latches curLatch){
 
 int16_t getPSRoutput(System_Latches curLatch){
 	int PSR        = curLatch.PSR,
-		N          = curLatch.N,
-		Z          = curLatch.Z,
-		P          = curLatch.P,
-		NZP        = ((N<<2) + (Z<<1) + P) & 0x0007;
+			N          = curLatch.N,
+			Z          = curLatch.Z,
+			P          = curLatch.P,
+			NZP        = ((N<<2) + (Z<<1) + P) & 0x0007;
 
 	return Low16bits(mask(PSR, 15)+NZP);
 }
@@ -1459,8 +1504,8 @@ int16_t getPSRoutput(System_Latches curLatch){
 int16_t getVECTORoutput(System_Latches curLatch){
 	int* microinst   = curLatch.MICROINSTRUCTION;
 	int VECTORMUX    = GetVECTORMUX(microinst),
-		curVector    = curLatch.Vector,
-	    baseVecTable = 0x0200;
+			curVector    = curLatch.Vector,
+			baseVecTable = 0x0200;
 	int16_t result   = 0;
 
 	switch(VECTORMUX) {
@@ -1540,10 +1585,10 @@ void output(void *V, enum DATA_TYPE Type) {
 				System_Latches latch = (*((System_Latches*)V));
 
 				printf("| CS=%.2d      | NS=%.2d       | APC=0x%.4X |            |\n"
-					   "| N=%d        | Z=%d         | P=%d        | BEN=%d      |\n"
-					   "| Priv=%d     | PC=0x%.4X   | VEC=0x%.4X | IR=0x%.4X  |\n"
-					   "| MAR=0x%.4X | MDR=0x%.4X  | READY=%d    | INT=%d      |\n"
-					   "| PSR=0x%.4X | INTV=0x%.4X | SSP=0x%.4X | USP=0x%.4X |\n",
+						       "| N=%d        | Z=%d         | P=%d        | BEN=%d      |\n"
+						       "| Priv=%d     | PC=0x%.4X   | VEC=0x%.4X | IR=0x%.4X  |\n"
+						       "| MAR=0x%.4X | MDR=0x%.4X  | READY=%d    | INT=%d      |\n"
+						       "| PSR=0x%.4X | INTV=0x%.4X | SSP=0x%.4X | USP=0x%.4X |\n",
 				       latch.STATE_NUMBER, NEXT_LATCHES.STATE_NUMBER, (latch.PC-2),
 				       latch.N, latch.Z, latch.P,latch.BEN,
 				       latch.Priv,latch.PC, latch.Vector, latch.IR,
