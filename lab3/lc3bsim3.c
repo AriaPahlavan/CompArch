@@ -1049,10 +1049,10 @@ void storeWordVal(uint16_t MAR, int16_t MDR) {
 void storeByteValue(uint16_t MAR, int16_t MDR) {
     loggingNoHeader(S, "<SB> Storing ", I, MDR, S, " into address ", I, MAR, info);
 
-    int *mem = MEMORY[MAR / 2];
+    int *mem = MEMORY[MAR/2];
 
-    if      ( MAR % 2 == 0 )     mem[MAR % 2] = Low16bits(lowByte(MDR));
-    else if ( MAR % 2 == 1 )     mem[MAR % 2] = Low16bits(highByte(MDR));
+    if      (MAR%2 == 0) mem[MAR%2] = Low16bits(lowByte(MDR));
+    else if (MAR%2 == 1) mem[MAR%2] = Low16bits(highByte(MDR));
 }
 
 int16_t getMDRMUXoutput(System_Latches curLatch) {
