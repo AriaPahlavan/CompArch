@@ -56,7 +56,7 @@ void latch_datapath_values();
 /***************************************************************/
 enum CS_BITS {
 	IRD,
-	COND2, COND1, COND0,
+	COND3, COND2, COND1, COND0,
 	J5, J4, J3, J2, J1, J0,
 	LD_MAR,
 	LD_MDR,
@@ -96,6 +96,10 @@ enum CS_BITS {
 	GatePCminOne,
 	TEMPMUX,
 	LD_TEMP,
+	GatePTE,
+	GateVA,
+	LD_VA,
+	UpdateMDR,
 	CONTROL_STORE_BITS
 } CS_BITS;
 
@@ -103,7 +107,7 @@ enum CS_BITS {
 /* Functions to get at the control bits.                       */
 /***************************************************************/
 int GetIRD(int *x)           { return(x[IRD]); }
-int GetCOND(int *x)          { return((x[COND2] << 2) + (x[COND1] << 1) + x[COND0]); }
+int GetCOND(int *x)          { return((x[COND3] << 3) + (x[COND2] << 2) + (x[COND1] << 1) + x[COND0]); }
 int GetJ(int *x)             { return((x[J5] << 5) + (x[J4] << 4) +
                                       (x[J3] << 3) + (x[J2] << 2) +
                                       (x[J1] << 1) + x[J0]); }
@@ -145,6 +149,13 @@ int GetVECTORMUX(int *x)     { return((x[VectorMUX1] << 1) + x[VectorMUX0]); }
 int GetPSRMUX(int *x)        { return(x[PSRMUX]); }
 int GetTEMPMUX(int *x)       { return(x[TEMPMUX]); }
 int GetLD_TEMP(int *x)       { return(x[LD_TEMP]); }
+
+int GetGATE_PTE(int *x)      { return(x[GatePTE]); }
+int GetGATE_VA(int *x)       { return(x[GateVA]); }
+int GetLD_VA(int *x)         { return(x[LD_VA]); }
+int GetUPDATE_MDR(int *x)    { return(x[UpdateMDR]); }
+int GetCOND3(int *x)         { return(x[COND3]); }
+
 
 /***************************************************************/
 /* The control store rom.                                      */
@@ -213,6 +224,8 @@ typedef struct System_Latches_Struct{
 	int PTBR; /* This is initialized when we load the page table */
 	int VA;   /* Temporary VA register */
 /* MODIFY: you should add here any other registers you need to implement virtual memory */
+	int PTE;
+	int PA;
 
 } System_Latches;
 
@@ -679,7 +692,8 @@ int main(int argc, char *argv[]) {
 #define info                EOL, __FUNCTION__, __LINE__, INFO
 #define warn                EOL, __FUNCTION__, __LINE__, WARN
 #define error               EOL, __FUNCTION__, __LINE__, ERROR
-#define memData(mem_index)  Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
+#define memData(mem_index)  Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) \
+                                      + (MEMORY[mem_index][0] & 0x00FF))
 #define MEM(addr)           memData(addr/2)
 #define bit(IR, b)          Low16bits((IR >> b) & 0x0001)
 #define mask(IR, b)         Low16bits( ((IR >> b) & 0x0001) << b )
@@ -720,7 +734,7 @@ int main(int argc, char *argv[]) {
 #define logic3(IR)          Low16bits( (not(bit(IR, 12))) << 3 )
 #define logic4(IR)          Low16bits( 0x0010 )
 #define IR15_12(IR)         Low16bits( ((IR & 0xF000) >> 3*nibble) & 0x000F )
-#define STATE48(TEMP)       Low16bits( 0x0021 + (TEMP << 2))
+#define STATE51(TEMP)       Low16bits( 0x0021 + (TEMP << 2))
 #define LDST_IR(IR)         Low16bits( ( logic4(IR) + \
 										 logic3(IR) + \
 										 logic2(IR)	+ \
@@ -914,7 +928,7 @@ int16_t getSHFoutput(System_Latches curLatch);
 
 int16_t getMDRMUXoutput(System_Latches curLatch);
 
-int isPrivViolated(int cond, int privilege, int isInSystemSpace);
+int isProtected(int cond, int privilege, int isInSystemSpace);
 
 void updatePC(System_Latches curLatch);
 
@@ -932,7 +946,7 @@ void updateMAR();
 
 int isInterrupted(int cond, int INT, int PSR_15);
 
-int isUnalignedAcces(int cond, int IR_14, int MAR_0);
+int isUnaligned(int cond, int IR_14, int MAR_0);
 
 int16_t getSPoutput(System_Latches curLatch);
 
@@ -976,16 +990,16 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 			IRD            = GetIRD            (CURRENT_LATCHES.MICROINSTRUCTION),
 			LDST           = GetLDST           (CURRENT_LATCHES.MICROINSTRUCTION),
 
-			readyStatus    = isReady(COND, CURRENT_LATCHES.READY),
-			branchStatus   = isBranch(COND, CURRENT_LATCHES.BEN),
-			addrModeStatus = isJsrAddrMode(COND, bit(IR, 11)),
-			privStatus     = isPrivViolated(COND, Priv, (MAR < 0x3000)),
-			interrupted    = isInterrupted(COND, INT, Priv),
-			unalignedAcc   = isUnalignedAcces(COND, bit(IR, 14), bit(MAR, 0)),
+			readyStatus    = isReady           (COND, CURRENT_LATCHES.READY),
+			branchStatus   = isBranch          (COND, CURRENT_LATCHES.BEN),
+			addrModeStatus = isJsrAddrMode     (COND, bit(IR, 11)),
+			privStatus     = isProtected       (COND, Priv, (!(bit(MAR,3))) ),
+			interrupted    = isInterrupted     (COND, INT, Priv),
+			unalignedAcc   = isUnaligned       (COND, bit(IR, 14), bit(MAR, 0)),
 
 			ldstNextState  = LDST == YES_ ? LDST_IR(IR) :
 			                 LDST == NO_  ? IR15_12(IR) :
-			                 STATE48(TEMP),
+			                 STATE51(TEMP),
 			nextStateAddr  = (IRD == YES_ ? ldstNextState :
 			                  Low16bits(J | J5_0(branchStatus,
 			                                     readyStatus,
@@ -1336,12 +1350,12 @@ int isInterrupted(int cond, int INT, int PSR_15) {
 	       && (INT & PSR_15);
 }
 
-int isPrivViolated(int cond, int privilege, int isInSystemSpace) {
+int isProtected(int cond, int privilege, int isInSystemSpace) {
 	return cond == 4
 	       && (!(privilege & isInSystemSpace)) ;
 }
 
-int isUnalignedAcces(int cond, int IR_14, int MAR_0) {
+int isUnaligned(int cond, int IR_14, int MAR_0) {
 	return cond == 6
 	       && (IR_14 & MAR_0);
 }
