@@ -97,7 +97,7 @@ enum CS_BITS {
 	TEMPMUX,
 	LD_TEMP,
 	GatePTE,
-	GateVA,
+	GatePA,
 	LD_VA,
 	UpdateMDR,
 	CONTROL_STORE_BITS
@@ -151,7 +151,7 @@ int GetTEMPMUX(int *x)       { return(x[TEMPMUX]); }
 int GetLD_TEMP(int *x)       { return(x[LD_TEMP]); }
 
 int GetGATE_PTE(int *x)      { return(x[GatePTE]); }
-int GetGATE_VA(int *x)       { return(x[GateVA]); }
+int GetGATE_PA(int *x)       { return(x[GatePA]); }
 int GetLD_VA(int *x)         { return(x[LD_VA]); }
 int GetUPDATE_MDR(int *x)    { return(x[UpdateMDR]); }
 int GetCOND3(int *x)         { return(x[COND3]); }
@@ -728,13 +728,15 @@ int main(int argc, char *argv[]) {
 #define logic1(IR)          Low16bits( (bit(IR, 14) & bit(IR, 12)) << 1 )
 #define logic2(IR)          Low16bits( (not(bit(IR, 14) ^ bit(IR, 12))) << 2 )
 #define logic3(IR)          Low16bits( (not(bit(IR, 14) & bit(IR, 12))) << 3 )*/
+#define VA_MASK(VA)         Low16bits( ((VA & 0xFE00) >> 9) & 0x007F )
 #define logic0(IR)          Low16bits( 0x0001)
 #define logic1(IR)          Low16bits( (bit(IR, 12)) << 1 )
 #define logic2(IR)          Low16bits( (not(bit(IR, 14) ^ bit(IR, 12))) << 2 )
 #define logic3(IR)          Low16bits( (not(bit(IR, 12))) << 3 )
 #define logic4(IR)          Low16bits( 0x0010 )
 #define IR15_12(IR)         Low16bits( ((IR & 0xF000) >> 3*nibble) & 0x000F )
-#define STATE51(TEMP)       Low16bits( 0x0021 + (TEMP << 2))
+#define getTemp(TEMP)       Low16bits( 0x0021 + (TEMP << 2))
+#define STATE51(TEMP)       getTemp(bit(TEMP, 0))
 #define LDST_IR(IR)         Low16bits( ( logic4(IR) + \
 										 logic3(IR) + \
 										 logic2(IR)	+ \
@@ -815,14 +817,16 @@ int main(int argc, char *argv[]) {
 /**-------------------------------- Structures & Enums --------------------------------*/
 typedef struct TRISTATE_GATES_STRUCTURE{
 	int gate_MARMUX_input,
-			gate_PC_input,
-			gate_ALU_input,
-			gate_SHF_input,
-			gate_MDR_input,
-			gate_SP_input,
-			gate_PSR_input,
-			gate_VECTOR_input,
-			gate_PC_DEC_input;
+		gate_PC_input,
+		gate_ALU_input,
+		gate_SHF_input,
+		gate_MDR_input,
+		gate_SP_input,
+		gate_PSR_input,
+		gate_VECTOR_input,
+		gate_PC_DEC_input,
+		gate_PTE_input,
+		gate_PA_input;
 
 	int16_t  ADDR;
 } GATES_STRUCT;
@@ -956,6 +960,10 @@ int16_t getVECTORoutput(System_Latches curLatch);
 
 int16_t getPCDECoutput(System_Latches curLatch);
 
+int16_t getPTEoutput(System_Latches curLatch);
+
+int16_t getPAoutput(System_Latches curLatch);
+
 void updatePriv(System_Latches curLatch);
 
 void updateSSP(System_Latches curLatch);
@@ -966,6 +974,10 @@ void updateVector(System_Latches curLatch);
 
 void updateTemp(System_Latches curLatch);
 
+
+void updateVA(System_Latches curLatch);
+
+void updateMDR2(System_Latches curLatch);
 
 /**-------------------------------- Function Definitions ------------------------------*/
 void eval_micro_sequencer() {/** Evaluate the address of the next state according to the
@@ -981,6 +993,7 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 
 	int     IR             = CURRENT_LATCHES.IR,
 			MAR            = CURRENT_LATCHES.MAR,
+			MDR            = CURRENT_LATCHES.MDR,
 			INT            = CURRENT_LATCHES.INT,
 			Priv           = CURRENT_LATCHES.Priv,
 			TEMP           = CURRENT_LATCHES.TEMP,
@@ -993,7 +1006,7 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 			readyStatus    = isReady           (COND, CURRENT_LATCHES.READY),
 			branchStatus   = isBranch          (COND, CURRENT_LATCHES.BEN),
 			addrModeStatus = isJsrAddrMode     (COND, bit(IR, 11)),
-			privStatus     = isProtected       (COND, Priv, (!(bit(MAR,3))) ),
+			privStatus     = isProtected       (COND, Priv, (!(bit(MDR,3))) ),
 			interrupted    = isInterrupted     (COND, INT, Priv),
 			unalignedAcc   = isUnaligned       (COND, bit(IR, 14), bit(MAR, 0)),
 
@@ -1095,6 +1108,8 @@ void eval_bus_drivers() {
 	GATE_INPUTS.gate_PSR_input    = getPSRoutput    (CURRENT_LATCHES);
 	GATE_INPUTS.gate_VECTOR_input = getVECTORoutput (CURRENT_LATCHES);
 	GATE_INPUTS.gate_PC_DEC_input = getPCDECoutput  (CURRENT_LATCHES);
+	GATE_INPUTS.gate_PTE_input    = getPTEoutput    (CURRENT_LATCHES);
+	GATE_INPUTS.gate_PA_input     = getPAoutput     (CURRENT_LATCHES);
 }
 
 /**
@@ -1114,6 +1129,8 @@ void drive_bus() {
 	else if (GetGATE_PSR(microinst))      result = GATE_INPUTS.gate_PSR_input;
 	else if (GetGATE_VECTOR(microinst))   result = GATE_INPUTS.gate_VECTOR_input;
 	else if (GetGATE_PCminOne(microinst)) result = GATE_INPUTS.gate_PC_DEC_input;
+	else if (GetGATE_PTE(microinst))      result = GATE_INPUTS.gate_PTE_input;
+	else if (GetGATE_PA(microinst))       result = GATE_INPUTS.gate_PA_input;
 	else result = 0;
 
 	BUS = Low16bits(result);
@@ -1128,28 +1145,52 @@ void drive_bus() {
 void latch_datapath_values() {
 	int *microinst = CURRENT_LATCHES.MICROINSTRUCTION;
 
-	if (GetLD_PC(microinst))     updatePC     (CURRENT_LATCHES);
-	if (GetLD_IR(microinst))     updateIR     ();
-	if (GetLD_MDR(microinst))    updateMDR    (CURRENT_LATCHES);
-	if (GetLD_MAR(microinst))    updateMAR    ();
-	if (GetLD_BEN(microinst))    updateBEN    ();
-	if (GetLD_REG(microinst))    updateREG    (CURRENT_LATCHES);
-	if (GetLD_CC(microinst))     setCC();
-	if (GetLD_PRIV(microinst))   updatePriv   (CURRENT_LATCHES);
-	if (GetLD_SSP(microinst))    updateSSP    (CURRENT_LATCHES);
-	if (GetLD_USP(microinst))    updateUSP    (CURRENT_LATCHES);
-	if (GetLD_VECTOR(microinst)) updateVector (CURRENT_LATCHES);
-	if (GetLD_TEMP(microinst))   updateTemp   (CURRENT_LATCHES);
+	if (GetLD_PC(microinst))      updatePC     (CURRENT_LATCHES);
+	if (GetLD_IR(microinst))      updateIR     ();
+	if (GetLD_MDR(microinst))     updateMDR    (CURRENT_LATCHES);
+	if (GetLD_MAR(microinst))     updateMAR    ();
+	if (GetLD_BEN(microinst))     updateBEN    ();
+	if (GetLD_REG(microinst))     updateREG    (CURRENT_LATCHES);
+	if (GetLD_CC(microinst))      setCC();
+	if (GetLD_PRIV(microinst))    updatePriv   (CURRENT_LATCHES);
+	if (GetLD_SSP(microinst))     updateSSP    (CURRENT_LATCHES);
+	if (GetLD_USP(microinst))     updateUSP    (CURRENT_LATCHES);
+	if (GetLD_VECTOR(microinst))  updateVector (CURRENT_LATCHES);
+	if (GetLD_TEMP(microinst))    updateTemp   (CURRENT_LATCHES);
+	if (GetLD_VA(microinst))      updateVA     (CURRENT_LATCHES);
+	if (GetUPDATE_MDR(microinst)) updateMDR2   (CURRENT_LATCHES);
+}
+
+void updateMDR2(System_Latches curLatch) {
+	int MDR  = curLatch.MDR,
+		TEMP = curLatch.TEMP;
+
+	MDR |= 0x0001;
+	MDR |= ((bit(TEMP, 15)) << 1);
+
+	logging(S, "updating MDR to ", I, MDR, info);
+
+	NEXT_LATCHES.MDR = MDR;
+}
+
+void updateVA(System_Latches curLatch) {
+	logging(S, "updating VA to ", I, Low16bits(BUS), info);
+
+	NEXT_LATCHES.VA = Low16bits(BUS);
 }
 
 void updateTemp(System_Latches curLatch) {
 	int *microinst = CURRENT_LATCHES.MICROINSTRUCTION;
+	int IR_12 = bit(CURRENT_LATCHES.IR, 12);
 
 	logging(S, "Updating TEMP to : ", I, GetTEMPMUX(microinst), debug);
 
 	switch(GetTEMPMUX(microinst)){
-		case 0: NEXT_LATCHES.TEMP = 0; break;
-		case 1: NEXT_LATCHES.TEMP = 1; break;
+		case 0: NEXT_LATCHES.TEMP = 0x0000; break;
+		case 1:
+			if(IR_12==1) NEXT_LATCHES.TEMP = 0x8001;
+			else         NEXT_LATCHES.TEMP = 0x0001;
+			break;
 		default: loggingMsg("Error with temp", error);
 	}
 }
@@ -1330,11 +1371,17 @@ void cpyMicroInst(int dst[], int src[]) {
 }
 
 int isBranch(int cond, int BEN) {
+	int cond3 = GetCOND3(CURRENT_LATCHES.MICROINSTRUCTION);
+	int MDR_2 = bit(CURRENT_LATCHES.MDR, 2);
+
 	if (CURRENT_LATCHES.STATE_NUMBER == 0)
 		logging(S, "Branch status checked to be: ",
 		        I, cond == 2 && BEN, debug
 		);
-	return cond == 2 && BEN;
+
+	int check = cond3==0 ? BEN : MDR_2;
+
+	return cond == 2 && check;
 }
 
 int isJsrAddrMode(int cond, int IR11) {
@@ -1535,6 +1582,22 @@ int16_t getVECTORoutput(System_Latches curLatch){
 
 int16_t getPCDECoutput(System_Latches curLatch){
 	return curLatch.PC-2;
+}
+
+int16_t getPAoutput(System_Latches curLatch) {
+	int MAR15_14 = (curLatch.MAR & 0xC000),
+		MDR13_9  = (curLatch.MDR & 0x3E00),
+		VA8_0    = (curLatch.VA  & 0x01FF);
+
+	return (MAR15_14 + MDR13_9 + VA8_0);
+}
+
+int16_t getPTEoutput(System_Latches curLatch) {
+	int VA   = curLatch.VA,
+		PTBR = curLatch.PTBR,
+		MAR  = PTBR + (LSHF(VA_MASK(VA)));
+
+	return MAR;
 }
 
 
