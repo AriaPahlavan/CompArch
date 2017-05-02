@@ -11,6 +11,7 @@ assemble
 simulate
 dumpsim
 */*.obj
+*/objects/*
 t
 storeNums.asm
 */outputs/*
