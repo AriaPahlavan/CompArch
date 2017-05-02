@@ -90,7 +90,7 @@ enum CS_BITS {
 	LD_Priv,
 	LD_SavedSSP,
 	SPMUX1, SPMUX0,
-	VectorMUX1, VectorMUX0,
+	VectorMUX2, VectorMUX1, VectorMUX0,
 	LD_SavedUSP,
 	PSRMUX,
 	GatePCminOne,
@@ -107,7 +107,7 @@ enum CS_BITS {
 /* Functions to get at the control bits.                       */
 /***************************************************************/
 int GetIRD(int *x)           { return(x[IRD]); }
-int GetCOND(int *x)          { return((x[COND3] << 3) + (x[COND2] << 2) + (x[COND1] << 1) + x[COND0]); }
+int GetCOND(int *x)          { return((x[COND2] << 2) + (x[COND1] << 1) + x[COND0]); }
 int GetJ(int *x)             { return((x[J5] << 5) + (x[J4] << 4) +
                                       (x[J3] << 3) + (x[J2] << 2) +
                                       (x[J1] << 1) + x[J0]); }
@@ -145,7 +145,7 @@ int GetLD_PRIV(int *x)       { return(x[LD_Priv]); }
 int GetLD_SSP(int *x)        { return(x[LD_SavedSSP]); }
 int GetLD_USP(int *x)        { return(x[LD_SavedUSP]); }
 int GetSPMUX(int *x)         { return((x[SPMUX1] << 1) + x[SPMUX0]); }
-int GetVECTORMUX(int *x)     { return((x[VectorMUX1] << 1) + x[VectorMUX0]); }
+int GetVECTORMUX(int *x)     { return((x[VectorMUX2] << 2) + (x[VectorMUX1] << 1) + x[VectorMUX0]); }
 int GetPSRMUX(int *x)        { return(x[PSRMUX]); }
 int GetTEMPMUX(int *x)       { return(x[TEMPMUX]); }
 int GetLD_TEMP(int *x)       { return(x[LD_TEMP]); }
@@ -791,10 +791,11 @@ int main(int argc, char *argv[]) {
 #define POS_TWO_    2
 #define USP_        3
 /* VECTORMUX */
-#define HEX_ONE_    0
-#define HEX_TWO_    1
-#define HEX_THREE_  2
-#define HEX_FOUR_   3
+#define ISR_        0
+#define PROT_       1
+#define ALGN_       2
+#define UNKW_       3
+#define PF_         4
 /* PSRMUX */
 #define LOGIC_      0
 /* LDST */
@@ -932,7 +933,7 @@ int16_t getSHFoutput(System_Latches curLatch);
 
 int16_t getMDRMUXoutput(System_Latches curLatch);
 
-int isProtected(int cond, int privilege, int isInSystemSpace);
+int isProtected(int cond, int PSR_15, int MDR_3);
 
 void updatePC(System_Latches curLatch);
 
@@ -991,6 +992,15 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 		NEXT_LATCHES.INTV = 0x01;
 	}
 
+	if(CURRENT_LATCHES.STATE_NUMBER==30) {
+		NEXT_LATCHES.Priv = 0;
+		NEXT_LATCHES.PSR &= 0x7FFF;
+		logging(S, "updated the PSR to: ",
+				I, NEXT_LATCHES.PSR,
+				S, ", and the privilege to: ",
+				I, NEXT_LATCHES.Priv, info);
+	}
+
 	int     IR             = CURRENT_LATCHES.IR,
 			MAR            = CURRENT_LATCHES.MAR,
 			MDR            = CURRENT_LATCHES.MDR,
@@ -1006,7 +1016,7 @@ void eval_micro_sequencer() {/** Evaluate the address of the next state accordin
 			readyStatus    = isReady           (COND, CURRENT_LATCHES.READY),
 			branchStatus   = isBranch          (COND, CURRENT_LATCHES.BEN),
 			addrModeStatus = isJsrAddrMode     (COND, bit(IR, 11)),
-			privStatus     = isProtected       (COND, Priv, (!(bit(MDR,3))) ),
+			privStatus     = isProtected       (COND, Priv, (bit(MDR,3)) ),
 			interrupted    = isInterrupted     (COND, INT, Priv),
 			unalignedAcc   = isUnaligned       (COND, bit(IR, 14), bit(MAR, 0)),
 
@@ -1201,13 +1211,13 @@ void updateVector(System_Latches curLatch) {
 	int16_t result = 0;
 
 	switch(VECTORMUX) {
-		case HEX_ONE_:
-			result = LSHF(SEXT(curLatch.INTV, 8));
+		case ISR_:   result = LSHF(SEXT(curLatch.INTV, 8));
 			NEXT_LATCHES.INT=0;
 			break;
-		case HEX_TWO_:   result = LSHF(SEXT(0x02, 8));           break;
-		case HEX_THREE_: result = LSHF(SEXT(0x03, 8));           break;
-		case HEX_FOUR_:  result = LSHF(SEXT(0x04, 8));           break;
+		case PF_:    result = LSHF(SEXT(0x02, 8)); break;
+		case ALGN_:  result = LSHF(SEXT(0x03, 8)); break;
+		case PROT_:  result = LSHF(SEXT(0x04, 8)); break;
+		case UNKW_:  result = LSHF(SEXT(0x05, 8)); break;
 		default:break;
 	}
 
@@ -1397,9 +1407,15 @@ int isInterrupted(int cond, int INT, int PSR_15) {
 	       && (INT & PSR_15);
 }
 
-int isProtected(int cond, int privilege, int isInSystemSpace) {
+int isProtected(int cond, int PSR_15, int MDR_3) {
+	if (cond == 4)
+		logging(S, "is protected? priv=",
+		        Id, PSR_15,
+		        S, ", MDR[3]=",
+		        Id, MDR_3, info);
+
 	return cond == 4
-	       && (!(privilege & isInSystemSpace)) ;
+	       && ((PSR_15 & MDR_3) | (!PSR_15));
 }
 
 int isUnaligned(int cond, int IR_14, int MAR_0) {
@@ -1563,21 +1579,10 @@ int16_t getPSRoutput(System_Latches curLatch){
 }
 
 int16_t getVECTORoutput(System_Latches curLatch){
-	int* microinst   = curLatch.MICROINSTRUCTION;
-	int VECTORMUX    = GetVECTORMUX(microinst),
-			curVector    = curLatch.Vector,
-			baseVecTable = 0x0200;
-	int16_t result   = 0;
+	int curVector    = curLatch.Vector,
+		baseVecTable = 0x0200;
 
-	switch(VECTORMUX) {
-		case HEX_ONE_:   result = baseVecTable + curVector; break;
-		case HEX_TWO_:   result = baseVecTable + curVector; break;
-		case HEX_THREE_: result = baseVecTable + curVector; break;
-		case HEX_FOUR_:  result = baseVecTable + curVector; break;
-		default:break;
-	}
-
-	return result;
+	return (baseVecTable + curVector);
 }
 
 int16_t getPCDECoutput(System_Latches curLatch){
@@ -1661,16 +1666,18 @@ void output(void *V, enum DATA_TYPE Type) {
 			if (TRUE){
 				System_Latches latch = (*((System_Latches*)V));
 
-				printf("| CS=%.2d      | NS=%.2d       | APC=0x%.4X |            |\n"
-						       "| N=%d        | Z=%d         | P=%d        | BEN=%d      |\n"
-						       "| Priv=%d     | PC=0x%.4X   | VEC=0x%.4X | IR=0x%.4X  |\n"
-						       "| MAR=0x%.4X | MDR=0x%.4X  | READY=%d    | INT=%d      |\n"
-						       "| PSR=0x%.4X | INTV=0x%.4X | SSP=0x%.4X | USP=0x%.4X |\n",
-				       latch.STATE_NUMBER, NEXT_LATCHES.STATE_NUMBER, (latch.PC-2),
+				printf("| CS=%.2d      | NS=%.2d       | APC=0x%.4X | TMP[15]=%d  |\n"
+					   "| N=%d        | Z=%d         | P=%d        | BEN=%d      |\n"
+					   "| Priv=%d     | PC=0x%.4X   | VEC=0x%.4X | IR=0x%.4X  |\n"
+					   "| MAR=0x%.4X | MDR=0x%.4X  | READY=%d    | INT=%d      |\n"
+					   "| PSR=0x%.4X | INTV=0x%.4X | SSP=0x%.4X | USP=0x%.4X |\n"
+				       "| VA=0x%.4X  | PTBR=0x%.4X | PA=0x%.4X  | PTE=0x%.4X |\n",
+				       latch.STATE_NUMBER, NEXT_LATCHES.STATE_NUMBER, (latch.PC-2), bit(latch.TEMP, 15),
 				       latch.N, latch.Z, latch.P,latch.BEN,
 				       latch.Priv,latch.PC, latch.Vector, latch.IR,
 				       latch.MAR, latch.MDR, latch.READY, latch.INT,
-				       latch.PSR, latch.INTV, latch.SSP, latch.USP
+				       latch.PSR, latch.INTV, latch.SSP, latch.USP,
+				       latch.VA, latch.PTBR, latch.PA, latch.PTE
 				);
 
 				printf("| R0: 0x%.4X | R1: 0x%.4X  | R2: 0x%.4X | R3: 0x%.4X |\n",
