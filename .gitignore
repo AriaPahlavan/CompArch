@@ -17,4 +17,5 @@ storeNums.asm
 */outputs/*
 */inputs/*
 */tests/*
-
+*/doc/*
+*/*.pdf
