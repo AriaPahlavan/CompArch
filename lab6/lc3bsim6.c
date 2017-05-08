@@ -170,9 +170,9 @@ int CONTROL_STORE[CONTROL_STORE_ROWS][NUM_CONTROL_STORE_BITS];
 /* Main memory.                                                */
 /***************************************************************/
 /* MEMORY[A][0] stores the least significant byte of word at word address A
-   MEMORY[A][1] stores the most significant byte of word at word address A 
-   There are two write enable signals, one for each byte. WE0 is used for 
-   the least significant byte of a word. WE1 is used for the most significant 
+   MEMORY[A][1] stores the most significant byte of word at word address A
+   There are two write enable signals, one for each byte. WE0 is used for
+   the least significant byte of a word. WE1 is used for the most significant
    byte of a word. */
 
 #define WORDS_IN_MEM    0x08000
@@ -850,7 +850,7 @@ int main(int argc, char *argv[]) {
 /* Do not modify the above code.
    You are allowed to use the following global variables in your
    code. These are defined above.
-   
+
    RUN_BIT
    REGS
    MEMORY
@@ -864,9 +864,9 @@ int main(int argc, char *argv[]) {
    v_de_br_stall
    v_agex_br_stall
    v_mem_br_stall
-   mem_stall 
+   mem_stall
    icache_r
- 
+
    PS
    NEW_PS
 
@@ -878,9 +878,232 @@ int main(int argc, char *argv[]) {
 
    Begin your code here 	  			       */
 /***************************************************************/
+
+#include <stdbool.h>
+#include <stdarg.h>
+#include <stdint.h>
+
+
+/**----------------------------------- Definitions ------------------------------------*/
+#define MANUAL_DEBUG        FALSE
+#define EMPTY_VAL           0
+#define LOG_LEVEL           DEBUG
+#define MAX_LOG_DEF_ARGS    4
+#define nibble              4
+#define debug               EOL, __FUNCTION__, __LINE__, DEBUG
+#define info                EOL, __FUNCTION__, __LINE__, INFO
+#define warn                EOL, __FUNCTION__, __LINE__, WARN
+#define error               EOL, __FUNCTION__, __LINE__, ERROR
+#define memData(mem_index)  Low16bits(((MEMORY[mem_index][1] << 2*nibble) & 0xFF00) + (MEMORY[mem_index][0] & 0x00FF))
+#define MEM(addr)           memData(addr/2)
+#define bit(IR, b)          Low16bits((IR >> b) & 0x0001)
+#define signExt(val, sbit)  Low16bits(bit(val, sbit) == 1 ? ((0xFFFF << (sbit + 1)) | val) \
+                                                             : ((0xFFFF >> (16 - (sbit + 1))) & val))
+#define SEXT(val, num_bits) signExt(val, num_bits-1)
+#define lowByte(val)        Low16bits(val & 0x00FF)
+#define highByte(val)       lowByte(val >> 2*nibble)
+#define SEXT_VAL(val, n)    Low16bits((0xFFFF << (16 - n)) | val)
+#define ZEXT_VAL(val, n)    Low16bits((0xFFFF >> n) & val)
+#define LSHF(val)           Low16bits(val << 1)
+#define LSHFN(val, n)       Low16bits(val << n)
+#define RSHFN(val, n, b)    b == 0 ? ZEXT_VAL(val >> n, n) : SEXT_VAL(val >> n, n)
+#define ZEXT8(val)           (val & 0x00FF)
+#define DR_NUM(IR)          Low16bits((((IR & 0x0E00) >> 9) & 0x0007))
+#define SR1_NUM(IR)         Low16bits((((IR & 0x01C0) >> 6) & 0x0007))
+#define SR2_NUM(IR)         Low16bits((IR & 0x0007))
+#define DR(IR)              Low16bits(CURRENT_LATCHES.REGS[DR_NUM(IR)])
+#define SR1(IR)             Low16bits(CURRENT_LATCHES.REGS[SR1_NUM(IR)])
+#define SR2(IR)             Low16bits(CURRENT_LATCHES.REGS[SR2_NUM(IR)])
+#define amount4(IR)         (IR & 0x000F)
+#define imm5(IR)            (IR & 0x001F)
+#define boffset6(IR)        (IR & 0x003F)
+#define offset6(IR)         SEXT( (IR & 0x003F), 6 )
+#define PCoffset9(IR)       SEXT( (IR & 0x01FF), 9 )
+#define PCoffset11(IR)      SEXT( (IR & 0x07FF), 11 )
+/*---------------------------------------------------------------------------------*/
+#define low3bits(BEN, R, IR11) (((BEN << 2) + (R << 1) + IR11) & 0x0007)
+#define align(addr)         (addr & 0xFFFE)
+#define STB_MDR(val)        Low16bits( (lowByte(val) << 2*nibble) + lowByte(val) )
+#define IR15_12(IR)         Low16bits( ((IR & 0xF000) >> 3*nibble) & 0x000F )
+
+#define BEN(IR, CC)         (( ( (bit(IR, 11) == 1) && (bit(CC, 2) == 1) ) \
+							|| ( (bit(IR, 10) == 1) && (bit(CC, 1) == 1) ) \
+							|| ( (bit(IR, 9)  == 1) && (bit(CC, 0) == 1) )) ? 1 : 0)
+
+
+/* R.W */
+#define RD_         0
+#define WR_         1
+/* DATA.SIZE */
+#define BYTE_       0
+#define WORD_       1
+/* PCMUX */
+#define PCplus2_    0
+#define BUS_        1
+#define ADDER_PC_   2
+/* DRMUX */
+#define B11_9_      0
+#define R7_         1
+/* SR1MUX */
+#define B8_6_       1
+/* SR2MUX */
+#define SR2_        0
+#define imm5_       1       /* SEXT[ IR[4:0]  ] */
+/* ADDR1MUX */
+#define PC_         0
+#define baseR_      1
+/* ADDR2MUX */
+#define ZERO_       0
+#define offset6_    1       /* SEXT[ IR[5:0]  ] */
+#define PCoffset9_  2       /* SEXT[ IR[8:0]  ] */
+#define PCoffset11_ 3       /* SEXT[ IR[10:0] ] */
+/* MARMUX */
+#define B7_0_       0       /* LSHF(ZEXT[IR[7:0]],1) */
+#define ADDER_MAR_  1
+/* ALUK */
+#define ADD_        0
+#define AND_        1
+#define XOR_        2
+#define PASSA_      3
+/* SIGNALS */
+#define NO_         0
+#define YES_        1
+#define ANRM  "\x1B[0m"
+#define AWHT  "\x1B[37m"
+
+/*--------------------LAB 6------------------*/
 #define COPY_AGEX_CS_START 3
 #define COPY_MEM_CS_START 9
 #define COPY_SR_CS_START  7
+
+/**-------------------------------- Structures & Enums --------------------------------*/
+/*typedef struct TRISTATE_GATES_STRUCTURE{
+	int gate_MARMUX_input,
+			gate_PC_input,
+			gate_ALU_input,
+			gate_SHF_input,
+			gate_MDR_input;
+
+	int16_t  ADDR;
+} GATES_STRUCT;*/
+enum DATA_TYPE {
+	CUR_LATCH,
+	MICROINST,
+	ADDR,
+	STAT,
+	PTR,
+	CHAR,
+	INT_8,
+	INT_16,
+	INT_32,
+	INT_64,
+	UINT_8,
+	UINT_16,
+	UINT_32,
+	UINT_64,
+	STR,
+	INT,
+	LONG,
+	LONG_INT,
+	ULONG,
+	ULONG_INT,
+	S,
+	I,
+	Id,
+	Ix,
+	L,
+	C,
+	P,
+	I8,
+	I16,
+	I32,
+	I64,
+	UI,
+	UI8,
+	UI16,
+	UI32,
+	UI64,
+	UL,
+	ULI,
+	LI,
+	N,
+	ENDL,
+	T,
+	TAB,
+	EOL
+};
+enum LOG_LEVELS {
+	DEBUG,
+	INFO,
+	WARN,
+	ERROR,
+	NONE
+};
+enum REGISTERS {
+	r0, r1, r2, r3, r4, r5, r6, r7
+};
+
+
+/**--------------------------------- Global Variables ---------------------------------*/
+/*GATES_STRUCT GATE_INPUTS;*/
+const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
+
+
+/**-------------------------------- Function Declarations -----------------------------*/
+void logging(int num, ...);
+
+void loggingNoHeader(int num, ...);
+
+void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl);
+
+void loggingMsgNoHeader(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl);
+
+void print(int num, ...);
+
+void println(int num, ...);
+
+enum OPCODES fetch(int opcode, int pc);
+
+int getReadyStatus(int cond, int R);
+
+int getAddrModeStatus(int cond, int IR11);
+
+int getBranchStatus(int cond, int BEN);
+
+void cpyMicroInst(int dst[], int src[]);
+
+void storeWordVal(uint16_t MAR, int16_t MDR);
+
+void storeByteValue(uint16_t MAR, int16_t MDR);
+
+void memOperation();
+
+/*int16_t getMARMUXoutput(System_Latches curLatch);
+
+int16_t getPCoutput(System_Latches curLatch);
+
+int16_t getALUoutput(System_Latches curLatch);
+
+int16_t getSHFoutput(System_Latches curLatch);
+
+int16_t getMDRMUXoutput(System_Latches curLatch);
+
+void updatePC(System_Latches curLatch);*/
+
+void setCC();
+
+/*void updateREG(System_Latches curLatch);
+
+void updateMDR(System_Latches curLatch);*/
+
+void updateBEN();
+
+void updateIR();
+
+void updateMAR();
+
+/**-------------------------------- Function Definitions ------------------------------*/
+
 
 /* Signals generated by SR stage and needed by previous stages in the
    pipeline are declared below. */
@@ -927,14 +1150,78 @@ void SR_stage() {
 }
 
 
+int mem_dr_id,
+	mem_pc_mux,
+	target_pc,
+	trap_pc,
+	v_mem_ld_cc,
+	v_mem_ld_reg;
 /************************* MEM_stage() *************************/
 void MEM_stage() {
 
 	int ii,jj = 0;
 
 	/* your code for MEM stage goes here */
+	mem_dr_id     = PS.MEM_DRID;
+	int mem_ir    = PS.MEM_IR,
+		mem_cc    = PS.MEM_CC,
+		mem_v     = PS.MEM_V,
+		br_op     = Get_BR_OP(PS.MEM_CS),
+		uncond_op =	Get_UNCOND_OP(PS.MEM_CS),
+		trap_op   = Get_TRAP_OP(PS.MEM_CS);
+
+	mem_pc_mux = mem_v==0     ? 0:
+                 br_op==1     ? BEN(mem_ir, mem_cc):
+                 uncond_op==1 ? 1:
+                 trap_op==1   ? 2:
+                                0;
+
+	int dcache_en   = Get_DCACHE_EN(PS.MEM_CS),
+		dcache_rw   = Get_DCACHE_RW(PS.MEM_CS),
+		data_size   = Get_DATA_SIZE(PS.MEM_CS),
+		mem_alu_res = PS.MEM_ALU_RESULT,
+		mem_address = PS.MEM_ADDRESS,
+		mem_addr_0  = bit(mem_address, 0);
 
 
+
+	int v_dcache_en = dcache_en & mem_v,
+		dcache_addr  = mem_address,
+		read_word    = 0,
+		dcache_r     = 0,
+
+		write_word   = data_size==1  ? mem_alu_res :
+		               mem_addr_0==1 ? Low16bits( (mem_alu_res<<(2*nibble)) | (mem_alu_res & 0x00FF) ):
+		                               mem_alu_res,
+
+		mem_w0       = dcache_rw==1 && (data_size==1 || mem_addr_0==0),
+		mem_w1       = dcache_rw==1 && (data_size==1 || mem_addr_0==1);
+
+
+	if(dcache_en)
+		dcache_access(dcache_addr,
+		              &read_word,
+		              write_word,
+		              &dcache_r,
+		              mem_w0, mem_w1);
+	else
+		dcache_r=1;
+
+
+	mem_stall = (!dcache_r) & v_dcache_en;
+
+	target_pc = mem_address;
+
+	int mem_ld_cc    = Get_MEM_LD_CC(PS.MEM_CS),
+		mem_ld_reg   = Get_MEM_LD_REG(PS.MEM_CS),
+		mem_br_stall = Get_MEM_BR_STALL(PS.MEM_CS);
+
+	v_mem_br_stall = mem_br_stall & mem_v;
+	v_mem_ld_cc    = mem_ld_cc & mem_v;
+	v_mem_ld_reg   = mem_ld_reg & mem_v;
+
+
+	trap_pc = v_dcache_en==0 ? 0 :
 
 
 
@@ -1013,4 +1300,313 @@ void FETCH_stage() {
 	/* your code for FETCH stage goes here */
 
 
-}  
+}
+
+
+/**-------------------------------- Logging Library ---------------------------------*/
+void printList(int num, va_list valist) {
+	int i;
+	num *= 2;
+
+	enum DATA_TYPE T;
+	void *V;
+
+	/* access all the arguments assigned to valist */
+	for (i = 0; i < num;) {
+		T = va_arg(valist, enum DATA_TYPE);
+
+		if (T == N || T == ENDL) {
+			V = EMPTY_VAL;
+			T == ENDL ? i += 2 : 0;
+		} else {
+			V = va_arg(valist, void *);
+			i += 2;
+		}
+
+		output(V, T);
+	}
+}
+
+void print(int num, ...) {
+	va_list valist;
+
+	/* initialize valist for num number of arguments */
+	va_start(valist, num);
+
+	printList(num, valist);
+
+	/* clean memory reserved for valist */
+	va_end(valist);
+}
+
+void println(int num, ...) {
+	va_list valist;
+
+	/* initialize valist for num number of arguments */
+	va_start(valist, num);
+
+	printList(num, valist);
+
+	/* clean memory reserved for valist */
+	va_end(valist);
+
+	output(EMPTY_VAL, ENDL);
+}
+
+void outputDouble(double value) {
+	printf("%f", value);
+}
+
+void output(void *V, enum DATA_TYPE Type) {
+	switch (Type) {
+		/*case CUR_LATCH:
+			if (TRUE){
+				int k;
+				printf("N=%d, Z=%d, P=%d\nSTATE NUM=%d, PC=%d, BEN=%d, IR=%d\nMAR=%d, MDR=%d, READY=%d\n",
+				       CURRENT_LATCHES.N, CURRENT_LATCHES.Z, CURRENT_LATCHES.P,
+				       CURRENT_LATCHES.STATE_NUMBER, CURRENT_LATCHES.PC, CURRENT_LATCHES.BEN, CURRENT_LATCHES.IR,
+				       CURRENT_LATCHES.MAR, CURRENT_LATCHES.MDR, CURRENT_LATCHES.READY
+				);
+				output(CURRENT_LATCHES.MICROINSTRUCTION, MICROINST);
+				for (k = 0; k < LC_3b_REGS; k++) {
+					printf("R%d: 0x%.4X  ", k, CURRENT_LATCHES.REGS[k]);
+					if (k == 3) printf("\n");
+				}
+			}
+			break;*/
+		case ADDR:
+			printf("0x%X", MEM((int) V));
+			break;
+		case P:
+		case PTR:
+			printf("%p", (int *) V);
+			break;
+		case C:
+		case CHAR:
+			printf("%c", (char) V);
+			break;
+		case S:
+		case STR:
+			printf("%s", (char *) V);
+			break;
+		case I8:
+		case INT_8:
+			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int8_t) V, AWHT, (int8_t) V, ANRM);
+			else printf("%d (0x%X)", (int8_t) V, (int8_t) V);
+			break;
+		case I16:
+		case INT_16:
+			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int16_t) V, AWHT, (int16_t) V, ANRM);
+			else printf("%d (0x%X)", (int16_t) V,  (int16_t) V);
+			break;
+		case I32:
+		case INT_32:
+			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int32_t) V, AWHT, (int32_t) V, ANRM);
+			else printf("%d (0x%X)", (int32_t) V,  (int32_t) V);
+			break;
+		case I64:
+		case INT_64:
+			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (int64_t) V, AWHT, (int64_t) V, ANRM);
+			else printf("%ld (0x%lX)", (int64_t) V, (int64_t) V);
+			break;
+		case UI8:
+		case UINT_8:
+			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint8_t) V, AWHT, (uint8_t) V, ANRM);
+			else printf("%u (0x%X)", (uint8_t) V, (uint8_t) V);
+			break;
+		case UI16:
+		case UINT_16:
+			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint16_t) V, AWHT, (uint16_t) V, ANRM);
+			else printf("%u (0x%X)", (uint16_t) V,  (uint16_t) V);
+			break;
+		case UI32:
+		case UINT_32:
+			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint32_t) V, AWHT, (uint32_t) V, ANRM);
+			else printf("%u (0x%X)", (uint32_t) V, (uint32_t) V);
+			break;
+		case UI64:
+		case UINT_64:
+			if(MANUAL_DEBUG) printf("%llu %s(0x%llX)%s", (uint64_t) V, AWHT, (uint64_t) V, ANRM);
+			else printf("%llu (0x%llX)", (uint64_t) V, (uint64_t) V);
+			break;
+		case I:
+		case INT:
+			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int) V, AWHT, (int) V, ANRM);
+			else printf("%d (0x%X)", (int) V, (int) V);
+			break;
+		case Id:
+			printf("%d", (int) V);
+			break;
+		case Ix:
+			printf("0x%X", (int) V);
+			break;
+		case L:
+		case LONG:
+			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (long) V, AWHT, (long) V, ANRM);
+			else printf("%ld (0x%lX)", (long) V, (long) V);
+			break;
+		case LI:
+		case LONG_INT:
+			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (long int) V, AWHT, (long int) V, ANRM);
+			else printf("%ld (0x%lX)", (long int) V, (long int) V);
+			break;
+		case UL:
+		case ULONG:
+			if(MANUAL_DEBUG) printf("%lu %s(0x%lX)%s", (unsigned long) V, AWHT, (unsigned long) V, ANRM);
+			else printf("%lu (0x%lX)", (unsigned long) V, (unsigned long) V);
+			break;
+		case ULI:
+		case ULONG_INT:
+			if(MANUAL_DEBUG) printf("%lu %s(0x%lX)%s", (unsigned long int) V, AWHT, (unsigned long int) V, ANRM);
+			else printf("%lu (0x%lX)", (unsigned long int) V, (unsigned long int) V);
+			break;
+		case N:
+		case ENDL:
+			printf("\n");
+			break;
+		case T:
+		case TAB:
+			printf("\t");
+			break;
+		default:
+			printf("INVALID ARGUMENTS\n");
+	}
+}
+
+int getLogNum() {
+	static int logNum = 0;
+	return logNum++;
+}
+
+void logging(int num, ...) {
+	va_list valist;
+	char *func;
+	int line, cur_indx = 0, i;
+	enum LOG_LEVELS lvl;
+	void *values[100];
+	enum DATA_TYPE tags[100];
+	enum DATA_TYPE tag;
+
+	/* initialize valist for num number of arguments */
+	va_start(valist, MAX_LOG_DEF_ARGS);
+	if (num == EOL) return;
+
+	tags[cur_indx] = num;
+	values[cur_indx] = va_arg(valist, void *);
+	cur_indx++;
+
+	while ((tag = va_arg(valist, enum DATA_TYPE)) != EOL) {
+		tags[cur_indx] = tag;
+		if (tag == ENDL || tag == N || tag == TAB || tag == T) {
+			cur_indx++;
+			continue;
+		}
+		values[cur_indx] = va_arg(valist, void *);
+		cur_indx++;
+	}
+	func = va_arg(valist, char *);
+	line = va_arg(valist, int);
+	lvl = va_arg(valist, enum LOG_LEVELS);
+
+	printLog(func, line, lvl, cur_indx, values, tags, true);
+
+	/* clean memory reserved for valist */
+	va_end(valist);
+
+}
+
+void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
+	if (lvl >= LOG_LEVEL) {
+		int curLogNum = getLogNum();
+		printf("[%s]: func:'%s' → line:%d (%d)\n%s", enumStrings[lvl], func, line, curLogNum, msg);
+		printf(" (%d)\n", curLogNum);
+	}
+}
+
+void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
+              const enum DATA_TYPE *tags, bool header) {
+	int i;
+	enum DATA_TYPE tag;
+	void *val;
+	if (level >= LOG_LEVEL) {
+		int curLogNum = getLogNum();
+
+		if (header) {
+			if(MANUAL_DEBUG) {
+				printf("[%s]: func:'%s' → line:%d (%d)\n", enumStrings[level], func, line, curLogNum);
+
+			} else{
+				if (line < 10) printf("\n------------------c(%d) -> l(%d)----------------\n", (CYCLE_COUNT+1), line);
+				else if (line < 100) printf("\n------------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
+				else if (line < 1000) printf("\n-----------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
+				else printf("\n-----------------c(%d) -> l(%d)--------------\n", (CYCLE_COUNT+1), line);
+			}
+
+		}
+
+		/* access all the arguments assigned to valist */
+		for (i = 0; i < length; i++) {
+			tag = tags[i];
+
+			if (tag == N || tag == ENDL || tag == TAB || tag == T)
+				val = EMPTY_VAL;
+			else
+				val = values[i];
+
+			output(val, tag);
+		}
+
+		if(MANUAL_DEBUG) {
+			printf(" (%d)\n", curLogNum);
+
+		} else{
+			printf("\n");
+		}
+	}
+}
+
+void loggingMsgNoHeader(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
+	if (lvl >= LOG_LEVEL) {
+		int curLogNum = getLogNum();
+		printf("%s", msg);
+		printf(" (%d)\n", curLogNum);
+	}
+}
+
+void loggingNoHeader(int num, ...) {
+	va_list valist;
+	char *func;
+	int line, cur_indx = 0, i;
+	enum LOG_LEVELS lvl;
+	void *values[100];
+	enum DATA_TYPE tags[100];
+	enum DATA_TYPE tag;
+
+	/* initialize valist for num number of arguments */
+	va_start(valist, MAX_LOG_DEF_ARGS);
+	if (num == EOL) return;
+
+	tags[cur_indx] = num;
+	values[cur_indx] = va_arg(valist, void *);
+	cur_indx++;
+
+	while ((tag = va_arg(valist, enum DATA_TYPE)) != EOL) {
+		tags[cur_indx] = tag;
+		if (tag == ENDL || tag == N || tag == TAB || tag == T) {
+			cur_indx++;
+			continue;
+		}
+		values[cur_indx] = va_arg(valist, void *);
+		cur_indx++;
+	}
+	func = va_arg(valist, char *);
+	line = va_arg(valist, int);
+	lvl = va_arg(valist, enum LOG_LEVELS);
+
+
+	printLog(func, line, lvl, cur_indx, values, tags, false);
+
+	/* clean memory reserved for valist */
+	va_end(valist);
+
+}
