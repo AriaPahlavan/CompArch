@@ -34,6 +34,10 @@ void SR_stage();
 /***************************************************************/
 /* A couple of useful definitions.                             */
 /***************************************************************/
+int dependencyWhere(int *de_cs, int sr1, int sr2);
+
+int canLoadPc();
+
 #define TRUE  1
 #define FALSE 0
 
@@ -880,7 +884,6 @@ int main(int argc, char *argv[]) {
 /***************************************************************/
 
 #include <stdbool.h>
-#include <stdarg.h>
 #include <stdint.h>
 
 
@@ -930,6 +933,8 @@ int main(int argc, char *argv[]) {
 							|| ( (bit(IR, 10) == 1) && (bit(CC, 1) == 1) ) \
 							|| ( (bit(IR, 9)  == 1) && (bit(CC, 0) == 1) )) ? 1 : 0)
 #define CS_ADDR(IR)         Low16bits( (((IR & 0xF800)>>10)  + (bit(IR, 5))) )
+#define ccfy(n,z,p)         Low16bits( (n<<2) + (z<<1) + p )
+#define reg(num)            Low16bits( REGS[num] )
 
 
 /* R.W */
@@ -940,8 +945,8 @@ int main(int argc, char *argv[]) {
 #define WORD_       1
 /* PCMUX */
 #define PCplus2_    0
-#define BUS_        1
-#define ADDER_PC_   2
+#define TARGET_PC_  1
+#define TRAP_PC_    2
 /* DRMUX */
 #define B11_9_      0
 #define R7_         1
@@ -969,6 +974,7 @@ int main(int argc, char *argv[]) {
 /* SIGNALS */
 #define NO_         0
 #define YES_        1
+
 #define ANRM  "\x1B[0m"
 #define AWHT  "\x1B[37m"
 
@@ -977,62 +983,7 @@ int main(int argc, char *argv[]) {
 #define COPY_MEM_CS_START 9
 #define COPY_SR_CS_START  7
 
-/**-------------------------------- Structures & Enums --------------------------------*/
-/*typedef struct TRISTATE_GATES_STRUCTURE{
-	int gate_MARMUX_input,
-			gate_PC_input,
-			gate_ALU_input,
-			gate_SHF_input,
-			gate_MDR_input;
 
-	int16_t  ADDR;
-} GATES_STRUCT;*/
-enum DATA_TYPE {
-	CUR_LATCH,
-	MICROINST,
-	ADDR,
-	STAT,
-	PTR,
-	CHAR,
-	INT_8,
-	INT_16,
-	INT_32,
-	INT_64,
-	UINT_8,
-	UINT_16,
-	UINT_32,
-	UINT_64,
-	STR,
-	INT,
-	LONG,
-	LONG_INT,
-	ULONG,
-	ULONG_INT,
-	S,
-	I,
-	Id,
-	Ix,
-	L,
-	C,
-	P,
-	I8,
-	I16,
-	I32,
-	I64,
-	UI,
-	UI8,
-	UI16,
-	UI32,
-	UI64,
-	UL,
-	ULI,
-	LI,
-	N,
-	ENDL,
-	T,
-	TAB,
-	EOL
-};
 enum LOG_LEVELS {
 	DEBUG,
 	INFO,
@@ -1050,58 +1001,6 @@ enum REGISTERS {
 const static char *enumStrings[] = {"DEBUG", "INFO", "WARN", "ERROR"};
 
 
-/**-------------------------------- Function Declarations -----------------------------*/
-void logging(int num, ...);
-
-void loggingNoHeader(int num, ...);
-
-void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl);
-
-void loggingMsgNoHeader(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl);
-
-void print(int num, ...);
-
-void println(int num, ...);
-
-enum OPCODES fetch(int opcode, int pc);
-
-int getReadyStatus(int cond, int R);
-
-int getAddrModeStatus(int cond, int IR11);
-
-int getBranchStatus(int cond, int BEN);
-
-void cpyMicroInst(int dst[], int src[]);
-
-void storeWordVal(uint16_t MAR, int16_t MDR);
-
-void storeByteValue(uint16_t MAR, int16_t MDR);
-
-void memOperation();
-
-/*int16_t getMARMUXoutput(System_Latches curLatch);
-
-int16_t getPCoutput(System_Latches curLatch);
-
-int16_t getALUoutput(System_Latches curLatch);
-
-int16_t getSHFoutput(System_Latches curLatch);
-
-int16_t getMDRMUXoutput(System_Latches curLatch);
-
-void updatePC(System_Latches curLatch);*/
-
-void setCC();
-
-/*void updateREG(System_Latches curLatch);
-
-void updateMDR(System_Latches curLatch);*/
-
-void updateBEN();
-
-void updateIR();
-
-void updateMAR();
 
 /**-------------------------------- Function Definitions ------------------------------*/
 
@@ -1266,7 +1165,7 @@ void AGEX_stage() {
 		agex_ir    = PS.AGEX_IR,
 		agex_sr1   = PS.AGEX_SR1,
 		agex_sr2   = PS.AGEX_SR2,
-		agex_cc    = PS.AGEX_CC,    /*todo*/
+		agex_cc    = PS.AGEX_CC,
 		agex_v     = PS.AGEX_V;
 
 	int addr1_res,
@@ -1336,9 +1235,9 @@ void AGEX_stage() {
 		NEW_PS.MEM_ALU_RESULT = mem_alu_res;
 		NEW_PS.MEM_ADDRESS    = mem_addr_res;
 		NEW_PS.MEM_DRID       = PS.AGEX_DRID;
-		NEW_PS.MEM_NPC        = PS.AGEX_NPC;
-		NEW_PS.MEM_CC         = PS.AGEX_CC;
-		NEW_PS.MEM_IR         = PS.AGEX_IR;
+		NEW_PS.MEM_NPC        = agex_npc;
+		NEW_PS.MEM_CC         = agex_cc;
+		NEW_PS.MEM_IR         = agex_ir;
 		NEW_PS.MEM_V          = agex_v;
 
 
@@ -1363,33 +1262,65 @@ void DE_stage() {
 		  LD.AGEX signal */
 
 	/* your code for DE stage goes here */
-	int de_npc = PS.DE_NPC,
+	int de_agex_dr_id,
+		de_npc = PS.DE_NPC,
 		de_ir  = PS.DE_IR,
 		de_v   = PS.DE_V;
 
-	int de_cs_addr = CS_ADDR(de_ir),
-		*de_cs     = CONTROL_STORE[de_cs_addr];
+	CONTROL_STORE_ADDRESS = CS_ADDR(de_ir);
+	int *de_cs = CONTROL_STORE[CONTROL_STORE_ADDRESS];
 
-	int addr1_res,
-		addr2_res,
-		mem_addr_res,
-		de_br_or   =Get_DE_BR_OP(de_cs),
-		addr1mux   = Get_ADDR1MUX(de_cs),
-		addr2mux   = Get_ADDR2MUX(de_cs),
-		lshf1      = Get_LSHF1(de_cs),
-		addressmux = Get_ADDRESSMUX(de_cs),
-		aluk       = Get_ALUK(de_cs),
-		sr2mux     = Get_SR2MUX(de_cs),
-		alu_resmux = Get_ALU_RESULTMUX(de_cs);
+	int agex_cc,
+		agex_sr1,
+		agex_sr2,
+		agex_v;
+
+	v_de_br_stall = de_v && de_cs[BR_STALL];
 
 
+
+	if (v_sr_ld_cc==1)
+	{
+		N = sr_n;
+		Z = sr_z;
+		P = sr_p;
+	}
+
+	int sr1      = SR1_NUM(de_ir),
+		sr2_11_9 = DR_NUM(de_ir),
+		sr2_2_0  = SR2_NUM(de_ir),
+		sr2      = bit(de_ir, 13)==0 ? sr2_2_0
+		                             : sr2_11_9;
+
+	agex_sr1 = reg(sr1);
+	agex_sr2 = reg(sr2);
+
+	if(v_sr_ld_reg==1)
+		REGS[sr_reg_id] = Low16bits( sr_reg_data );
+
+	agex_cc = ccfy(N,Z,P);
+
+	LD_AGEX = mem_stall==1 ? 0
+	                       : 1;
+
+
+	de_agex_dr_id = de_cs[DRMUX]==0 ? DR_NUM(de_ir)
+	                                : 7;
+
+	dep_stall = dependencyWhere(de_cs, sr1, sr2);
+	agex_v = (!dep_stall) && de_v;
 
 
 	if (LD_AGEX) {
 		/* Your code for latching into AGEX latches goes here */
 
-
-
+		NEW_PS.AGEX_DRID = de_agex_dr_id;
+		NEW_PS.AGEX_SR1  = agex_sr1;
+		NEW_PS.AGEX_SR2  = agex_sr2;
+		NEW_PS.AGEX_NPC  = de_npc;
+		NEW_PS.AGEX_IR   = de_ir;
+		NEW_PS.AGEX_CC   = agex_cc;
+		NEW_PS.AGEX_V    = agex_v;
 
 		/* The code below propagates the control signals from the CONTROL
 		   STORE to the AGEX.CS latch. */
@@ -1400,321 +1331,64 @@ void DE_stage() {
 
 }
 
+int dependencyWhere(int *de_cs, int sr1, int sr2) {
+	int sr1_needed = Get_SR1_NEEDED(de_cs),
+		sr2_needed = Get_SR2_NEEDED(de_cs),
+		de_br_op   = Get_DE_BR_OP(de_cs);
+
+	if (PS.DE_V==0) return 0;
+
+	if(   (sr1_needed && v_agex_ld_reg && (sr1==agex_dr_id))
+	   || (sr1_needed && v_mem_ld_reg  && (sr1==mem_dr_id))
+	   || (sr1_needed && v_sr_ld_reg   && (sr1==sr_reg_id))
+	   || (sr2_needed && v_agex_ld_reg && (sr2==agex_dr_id))
+	   || (sr2_needed && v_mem_ld_reg  && (sr2==mem_dr_id))
+	   || (sr2_needed && v_sr_ld_reg   && (sr2==sr_reg_id))
+	   || (de_br_op && ( v_agex_ld_cc || v_mem_ld_cc || v_sr_ld_cc )))
+		return 1;
+
+	else return 0;
+}
 
 
 /************************* FETCH_stage() *************************/
 void FETCH_stage() {
 
 	/* your code for FETCH stage goes here */
+	int LD_DE,
+		ld_pc,
+		de_npc = Low16bits(PC+2),
+		de_ir = 0,
+		de_v;
 
+	icache_access(PC, &de_ir, &icache_r);
 
-}
+	ld_pc = canLoadPc();
 
+	if(ld_pc) {
+		PC = mem_pc_mux == PCplus2_   ? Low16bits(PC+2) :
+		     mem_pc_mux == TARGET_PC_ ? Low16bits(target_pc) :
+							     	    Low16bits(trap_pc);
+	}
 
-/**-------------------------------- Logging Library ---------------------------------*/
-void printList(int num, va_list valist) {
-	int i;
-	num *= 2;
+	de_v = (ld_pc==0)||v_mem_br_stall ? 0
+	                                  : 1;
 
-	enum DATA_TYPE T;
-	void *V;
+	LD_DE = mem_stall||dep_stall ? 0
+	                             : 1;
 
-	/* access all the arguments assigned to valist */
-	for (i = 0; i < num;) {
-		T = va_arg(valist, enum DATA_TYPE);
-
-		if (T == N || T == ENDL) {
-			V = EMPTY_VAL;
-			T == ENDL ? i += 2 : 0;
-		} else {
-			V = va_arg(valist, void *);
-			i += 2;
-		}
-
-		output(V, T);
+	if(LD_DE) {
+		NEW_PS.DE_NPC = de_npc;
+		NEW_PS.DE_IR  = de_ir;
+		NEW_PS.DE_V   = de_v;
 	}
 }
 
-void print(int num, ...) {
-	va_list valist;
-
-	/* initialize valist for num number of arguments */
-	va_start(valist, num);
-
-	printList(num, valist);
-
-	/* clean memory reserved for valist */
-	va_end(valist);
+int canLoadPc() {
+	if ((icache_r && !dep_stall && !mem_stall && !v_de_br_stall && !v_agex_br_stall && !v_mem_br_stall)
+	    || ( v_mem_br_stall && (mem_pc_mux!=0) ))
+		return 1;
+	else
+		return 0;
 }
 
-void println(int num, ...) {
-	va_list valist;
-
-	/* initialize valist for num number of arguments */
-	va_start(valist, num);
-
-	printList(num, valist);
-
-	/* clean memory reserved for valist */
-	va_end(valist);
-
-	output(EMPTY_VAL, ENDL);
-}
-
-void outputDouble(double value) {
-	printf("%f", value);
-}
-
-void output(void *V, enum DATA_TYPE Type) {
-	switch (Type) {
-		/*case CUR_LATCH:
-			if (TRUE){
-				int k;
-				printf("N=%d, Z=%d, P=%d\nSTATE NUM=%d, PC=%d, BEN=%d, IR=%d\nMAR=%d, MDR=%d, READY=%d\n",
-				       CURRENT_LATCHES.N, CURRENT_LATCHES.Z, CURRENT_LATCHES.P,
-				       CURRENT_LATCHES.STATE_NUMBER, CURRENT_LATCHES.PC, CURRENT_LATCHES.BEN, CURRENT_LATCHES.IR,
-				       CURRENT_LATCHES.MAR, CURRENT_LATCHES.MDR, CURRENT_LATCHES.READY
-				);
-				output(CURRENT_LATCHES.MICROINSTRUCTION, MICROINST);
-				for (k = 0; k < LC_3b_REGS; k++) {
-					printf("R%d: 0x%.4X  ", k, CURRENT_LATCHES.REGS[k]);
-					if (k == 3) printf("\n");
-				}
-			}
-			break;*/
-		case ADDR:
-			printf("0x%X", MEM((int) V));
-			break;
-		case P:
-		case PTR:
-			printf("%p", (int *) V);
-			break;
-		case C:
-		case CHAR:
-			printf("%c", (char) V);
-			break;
-		case S:
-		case STR:
-			printf("%s", (char *) V);
-			break;
-		case I8:
-		case INT_8:
-			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int8_t) V, AWHT, (int8_t) V, ANRM);
-			else printf("%d (0x%X)", (int8_t) V, (int8_t) V);
-			break;
-		case I16:
-		case INT_16:
-			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int16_t) V, AWHT, (int16_t) V, ANRM);
-			else printf("%d (0x%X)", (int16_t) V,  (int16_t) V);
-			break;
-		case I32:
-		case INT_32:
-			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int32_t) V, AWHT, (int32_t) V, ANRM);
-			else printf("%d (0x%X)", (int32_t) V,  (int32_t) V);
-			break;
-		case I64:
-		case INT_64:
-			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (int64_t) V, AWHT, (int64_t) V, ANRM);
-			else printf("%ld (0x%lX)", (int64_t) V, (int64_t) V);
-			break;
-		case UI8:
-		case UINT_8:
-			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint8_t) V, AWHT, (uint8_t) V, ANRM);
-			else printf("%u (0x%X)", (uint8_t) V, (uint8_t) V);
-			break;
-		case UI16:
-		case UINT_16:
-			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint16_t) V, AWHT, (uint16_t) V, ANRM);
-			else printf("%u (0x%X)", (uint16_t) V,  (uint16_t) V);
-			break;
-		case UI32:
-		case UINT_32:
-			if(MANUAL_DEBUG) printf("%u %s(0x%X)%s", (uint32_t) V, AWHT, (uint32_t) V, ANRM);
-			else printf("%u (0x%X)", (uint32_t) V, (uint32_t) V);
-			break;
-		case UI64:
-		case UINT_64:
-			if(MANUAL_DEBUG) printf("%llu %s(0x%llX)%s", (uint64_t) V, AWHT, (uint64_t) V, ANRM);
-			else printf("%llu (0x%llX)", (uint64_t) V, (uint64_t) V);
-			break;
-		case I:
-		case INT:
-			if(MANUAL_DEBUG) printf("%d %s(0x%X)%s", (int) V, AWHT, (int) V, ANRM);
-			else printf("%d (0x%X)", (int) V, (int) V);
-			break;
-		case Id:
-			printf("%d", (int) V);
-			break;
-		case Ix:
-			printf("0x%X", (int) V);
-			break;
-		case L:
-		case LONG:
-			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (long) V, AWHT, (long) V, ANRM);
-			else printf("%ld (0x%lX)", (long) V, (long) V);
-			break;
-		case LI:
-		case LONG_INT:
-			if(MANUAL_DEBUG) printf("%ld %s(0x%lX)%s", (long int) V, AWHT, (long int) V, ANRM);
-			else printf("%ld (0x%lX)", (long int) V, (long int) V);
-			break;
-		case UL:
-		case ULONG:
-			if(MANUAL_DEBUG) printf("%lu %s(0x%lX)%s", (unsigned long) V, AWHT, (unsigned long) V, ANRM);
-			else printf("%lu (0x%lX)", (unsigned long) V, (unsigned long) V);
-			break;
-		case ULI:
-		case ULONG_INT:
-			if(MANUAL_DEBUG) printf("%lu %s(0x%lX)%s", (unsigned long int) V, AWHT, (unsigned long int) V, ANRM);
-			else printf("%lu (0x%lX)", (unsigned long int) V, (unsigned long int) V);
-			break;
-		case N:
-		case ENDL:
-			printf("\n");
-			break;
-		case T:
-		case TAB:
-			printf("\t");
-			break;
-		default:
-			printf("INVALID ARGUMENTS\n");
-	}
-}
-
-int getLogNum() {
-	static int logNum = 0;
-	return logNum++;
-}
-
-void logging(int num, ...) {
-	va_list valist;
-	char *func;
-	int line, cur_indx = 0, i;
-	enum LOG_LEVELS lvl;
-	void *values[100];
-	enum DATA_TYPE tags[100];
-	enum DATA_TYPE tag;
-
-	/* initialize valist for num number of arguments */
-	va_start(valist, MAX_LOG_DEF_ARGS);
-	if (num == EOL) return;
-
-	tags[cur_indx] = num;
-	values[cur_indx] = va_arg(valist, void *);
-	cur_indx++;
-
-	while ((tag = va_arg(valist, enum DATA_TYPE)) != EOL) {
-		tags[cur_indx] = tag;
-		if (tag == ENDL || tag == N || tag == TAB || tag == T) {
-			cur_indx++;
-			continue;
-		}
-		values[cur_indx] = va_arg(valist, void *);
-		cur_indx++;
-	}
-	func = va_arg(valist, char *);
-	line = va_arg(valist, int);
-	lvl = va_arg(valist, enum LOG_LEVELS);
-
-	printLog(func, line, lvl, cur_indx, values, tags, true);
-
-	/* clean memory reserved for valist */
-	va_end(valist);
-
-}
-
-void loggingMsg(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
-	if (lvl >= LOG_LEVEL) {
-		int curLogNum = getLogNum();
-		printf("[%s]: func:'%s' → line:%d (%d)\n%s", enumStrings[lvl], func, line, curLogNum, msg);
-		printf(" (%d)\n", curLogNum);
-	}
-}
-
-void printLog(const char *func, int line, enum LOG_LEVELS level, int length, void *const *values,
-              const enum DATA_TYPE *tags, bool header) {
-	int i;
-	enum DATA_TYPE tag;
-	void *val;
-	if (level >= LOG_LEVEL) {
-		int curLogNum = getLogNum();
-
-		if (header) {
-			if(MANUAL_DEBUG) {
-				printf("[%s]: func:'%s' → line:%d (%d)\n", enumStrings[level], func, line, curLogNum);
-
-			} else{
-				if (line < 10) printf("\n------------------c(%d) -> l(%d)----------------\n", (CYCLE_COUNT+1), line);
-				else if (line < 100) printf("\n------------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
-				else if (line < 1000) printf("\n-----------------c(%d) -> l(%d)---------------\n", (CYCLE_COUNT+1), line);
-				else printf("\n-----------------c(%d) -> l(%d)--------------\n", (CYCLE_COUNT+1), line);
-			}
-
-		}
-
-		/* access all the arguments assigned to valist */
-		for (i = 0; i < length; i++) {
-			tag = tags[i];
-
-			if (tag == N || tag == ENDL || tag == TAB || tag == T)
-				val = EMPTY_VAL;
-			else
-				val = values[i];
-
-			output(val, tag);
-		}
-
-		if(MANUAL_DEBUG) {
-			printf(" (%d)\n", curLogNum);
-
-		} else{
-			printf("\n");
-		}
-	}
-}
-
-void loggingMsgNoHeader(const char *msg, enum DATA_TYPE t, const char *func, int line, enum LOG_LEVELS lvl) {
-	if (lvl >= LOG_LEVEL) {
-		int curLogNum = getLogNum();
-		printf("%s", msg);
-		printf(" (%d)\n", curLogNum);
-	}
-}
-
-void loggingNoHeader(int num, ...) {
-	va_list valist;
-	char *func;
-	int line, cur_indx = 0, i;
-	enum LOG_LEVELS lvl;
-	void *values[100];
-	enum DATA_TYPE tags[100];
-	enum DATA_TYPE tag;
-
-	/* initialize valist for num number of arguments */
-	va_start(valist, MAX_LOG_DEF_ARGS);
-	if (num == EOL) return;
-
-	tags[cur_indx] = num;
-	values[cur_indx] = va_arg(valist, void *);
-	cur_indx++;
-
-	while ((tag = va_arg(valist, enum DATA_TYPE)) != EOL) {
-		tags[cur_indx] = tag;
-		if (tag == ENDL || tag == N || tag == TAB || tag == T) {
-			cur_indx++;
-			continue;
-		}
-		values[cur_indx] = va_arg(valist, void *);
-		cur_indx++;
-	}
-	func = va_arg(valist, char *);
-	line = va_arg(valist, int);
-	lvl = va_arg(valist, enum LOG_LEVELS);
-
-
-	printLog(func, line, lvl, cur_indx, values, tags, false);
-
-	/* clean memory reserved for valist */
-	va_end(valist);
-
-}
