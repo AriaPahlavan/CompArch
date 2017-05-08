@@ -1222,6 +1222,9 @@ void MEM_stage() {
 
 
 	trap_pc = v_dcache_en==0 ? 0 :
+              data_size==1   ? read_word :
+              mem_addr_0==0  ? lowByte(read_word) :
+                               SEXT(lowByte((read_word>>(2*nibble))), 8);
 
 
 
@@ -1232,9 +1235,21 @@ void MEM_stage() {
 		NEW_PS.SR_CS [jj++] = PS.MEM_CS [ii];
 	}
 
+	NEW_PS.SR_V = (!mem_stall) && mem_v;
+
+	NEW_PS.SR_ALU_RESULT = mem_alu_res;
+	NEW_PS.SR_ADDRESS    = mem_address;
+	NEW_PS.SR_DRID       = PS.MEM_DRID;
+	NEW_PS.SR_DATA       = trap_pc;
+	NEW_PS.SR_NPC        = PS.MEM_NPC;
+	NEW_PS.SR_IR         = mem_ir;
 }
 
 
+
+int agex_dr_id,
+	v_agex_ld_cc,
+	v_agex_ld_reg;
 /************************* AGEX_stage() *************************/
 void AGEX_stage() {
 
@@ -1243,6 +1258,41 @@ void AGEX_stage() {
 		 signal */
 
 	/* your code for AGEX stage goes here */
+	int *agex_cs   = PS.AGEX_CS,
+		agex_npc   = PS.AGEX_NPC,
+		agex_ir    = PS.AGEX_IR,
+		agex_sr1   = PS.AGEX_SR1,
+		agex_sr2   = PS.AGEX_SR2,
+		agex_cc    = PS.AGEX_CC,
+		agex_dr_id = PS.AGEX_DRID,
+		agex_v     = PS.AGEX_V;
+
+	int addr1mux   = Get_ADDR1MUX(agex_cs),
+		addr2mux   = Get_ADDR2MUX(agex_cs),
+		addressmux = Get_ADDRESSMUX(agex_cs),
+		aluk       = Get_ALUK(agex_cs),
+		sr2mux     = Get_SR2MUX(agex_cs),
+		alu_resmux = Get_ALU_RESULTMUX(agex_cs);
+
+	int alu_res,
+		shf_res,
+		off6 = boffset6(agex_ir),
+		a = agex_sr1,
+		b = sr2mux==SR2_ ? agex_sr2 :
+                           imm5(agex_ir);
+
+
+
+	switch (aluk) {
+		case ADD_:   alu_res = a+b; break;
+		case AND_:   alu_res = a&b; break;
+		case XOR_:   alu_res = a^b; break;
+		case PASSA_: alu_res = b;   break;
+	}
+
+	if (bit(off6, 4) == 0)       shf_res = LSHFN(agex_sr1, amount4(agex_ir));
+	else if (bit(off6, 5) == 0)  shf_res = RSHFN(agex_sr1, amount4(agex_ir), 0);
+	else                         shf_res = RSHFN(agex_sr1, amount4(agex_ir), bit(agex_sr1, 15));
 
 
 
