@@ -929,6 +929,7 @@ int main(int argc, char *argv[]) {
 #define BEN(IR, CC)         (( ( (bit(IR, 11) == 1) && (bit(CC, 2) == 1) ) \
 							|| ( (bit(IR, 10) == 1) && (bit(CC, 1) == 1) ) \
 							|| ( (bit(IR, 9)  == 1) && (bit(CC, 0) == 1) )) ? 1 : 0)
+#define CS_ADDR(IR)         Low16bits( (((IR & 0xF800)>>10)  + (bit(IR, 5))) )
 
 
 /* R.W */
@@ -1258,23 +1259,28 @@ void AGEX_stage() {
 		 signal */
 
 	/* your code for AGEX stage goes here */
+	agex_dr_id = PS.AGEX_DRID;
+
 	int *agex_cs   = PS.AGEX_CS,
 		agex_npc   = PS.AGEX_NPC,
 		agex_ir    = PS.AGEX_IR,
 		agex_sr1   = PS.AGEX_SR1,
 		agex_sr2   = PS.AGEX_SR2,
-		agex_cc    = PS.AGEX_CC,
-		agex_dr_id = PS.AGEX_DRID,
+		agex_cc    = PS.AGEX_CC,    /*todo*/
 		agex_v     = PS.AGEX_V;
 
-	int addr1mux   = Get_ADDR1MUX(agex_cs),
+	int addr1_res,
+		addr2_res,
+		mem_addr_res,
+		addr1mux   = Get_ADDR1MUX(agex_cs),
 		addr2mux   = Get_ADDR2MUX(agex_cs),
+		lshf1      = Get_LSHF1(agex_cs),
 		addressmux = Get_ADDRESSMUX(agex_cs),
 		aluk       = Get_ALUK(agex_cs),
 		sr2mux     = Get_SR2MUX(agex_cs),
 		alu_resmux = Get_ALU_RESULTMUX(agex_cs);
 
-	int alu_res,
+	int mem_alu_res=0,
 		shf_res,
 		off6 = boffset6(agex_ir),
 		a = agex_sr1,
@@ -1284,21 +1290,56 @@ void AGEX_stage() {
 
 
 	switch (aluk) {
-		case ADD_:   alu_res = a+b; break;
-		case AND_:   alu_res = a&b; break;
-		case XOR_:   alu_res = a^b; break;
-		case PASSA_: alu_res = b;   break;
+		case ADD_:   mem_alu_res = Low16bits(a+b); break;
+		case AND_:   mem_alu_res = Low16bits(a&b); break;
+		case XOR_:   mem_alu_res = Low16bits(a^b); break;
+		case PASSA_: mem_alu_res = Low16bits(b);   break;
 	}
 
 	if (bit(off6, 4) == 0)       shf_res = LSHFN(agex_sr1, amount4(agex_ir));
 	else if (bit(off6, 5) == 0)  shf_res = RSHFN(agex_sr1, amount4(agex_ir), 0);
 	else                         shf_res = RSHFN(agex_sr1, amount4(agex_ir), bit(agex_sr1, 15));
 
+	mem_alu_res = alu_resmux==0 ? shf_res
+	                        : mem_alu_res;
+
+
+	addr1_res = (addr1mux==PC_ ? agex_npc : agex_sr1);
+
+	switch (addr2mux) {
+		case ZERO_:       addr2_res = 0;                   break;
+		case offset6_:    addr2_res = offset6(agex_ir);    break;
+		case PCoffset9_:  addr2_res = PCoffset9(agex_ir);  break;
+		case PCoffset11_: addr2_res = PCoffset11(agex_ir); break;
+		default:          addr2_res = 0;                   break;
+	}
+
+	addr2_res = (lshf1== YES_ ? LSHF(addr2_res)
+	                          : addr2_res);
+	mem_addr_res = (addressmux == B7_0_ ? LSHF(ZEXT8(agex_ir))
+	                                    : addr1_res + addr2_res);
+
+	int agex_ld_cc    = Get_AGEX_LD_CC(PS.AGEX_CS),
+		agex_ld_reg   = Get_AGEX_LD_REG(PS.AGEX_CS),
+		agex_br_stall = Get_AGEX_BR_STALL(PS.AGEX_CS);
+
+	v_agex_br_stall = agex_br_stall & agex_v;
+	v_agex_ld_cc    = agex_ld_cc & agex_v;
+	v_agex_ld_reg   = agex_ld_reg & agex_v;
+
+
+	LD_MEM = mem_stall==1 ? 0 : 1;
 
 
 	if (LD_MEM) {
 		/* Your code for latching into MEM latches goes here */
-
+		NEW_PS.MEM_ALU_RESULT = mem_alu_res;
+		NEW_PS.MEM_ADDRESS    = mem_addr_res;
+		NEW_PS.MEM_DRID       = PS.AGEX_DRID;
+		NEW_PS.MEM_NPC        = PS.AGEX_NPC;
+		NEW_PS.MEM_CC         = PS.AGEX_CC;
+		NEW_PS.MEM_IR         = PS.AGEX_IR;
+		NEW_PS.MEM_V          = agex_v;
 
 
 		/* The code below propagates the control signals from AGEX.CS latch
@@ -1322,7 +1363,24 @@ void DE_stage() {
 		  LD.AGEX signal */
 
 	/* your code for DE stage goes here */
+	int de_npc = PS.DE_NPC,
+		de_ir  = PS.DE_IR,
+		de_v   = PS.DE_V;
 
+	int de_cs_addr = CS_ADDR(de_ir),
+		*de_cs     = CONTROL_STORE[de_cs_addr];
+
+	int addr1_res,
+		addr2_res,
+		mem_addr_res,
+		de_br_or   =Get_DE_BR_OP(de_cs),
+		addr1mux   = Get_ADDR1MUX(de_cs),
+		addr2mux   = Get_ADDR2MUX(de_cs),
+		lshf1      = Get_LSHF1(de_cs),
+		addressmux = Get_ADDRESSMUX(de_cs),
+		aluk       = Get_ALUK(de_cs),
+		sr2mux     = Get_SR2MUX(de_cs),
+		alu_resmux = Get_ALU_RESULTMUX(de_cs);
 
 
 
