@@ -913,8 +913,10 @@ int main(int argc, char *argv[]) {
 #define DR(IR)              Low16bits(CURRENT_LATCHES.REGS[DR_NUM(IR)])
 #define SR1(IR)             Low16bits(CURRENT_LATCHES.REGS[SR1_NUM(IR)])
 #define SR2(IR)             Low16bits(CURRENT_LATCHES.REGS[SR2_NUM(IR)])
+#define shfMux(IR)          ((IR>>4)%4)
 #define amount4(IR)         (IR & 0x000F)
 #define imm5(IR)            (IR & 0x001F)
+#define simm5(IR)           (IR&0x0010) ? (imm5(IR)|0xFFE0) : imm5(IR)
 #define boffset6(IR)        (IR & 0x003F)
 #define offset6(IR)         SEXT( (IR & 0x003F), 6 )
 #define PCoffset9(IR)       SEXT( (IR & 0x01FF), 9 )
@@ -1178,29 +1180,39 @@ void AGEX_stage() {
 		sr2mux     = Get_SR2MUX(agex_cs),
 		alu_resmux = Get_ALU_RESULTMUX(agex_cs);
 
+
+
+	int bb = imm5(agex_ir);
+	if(agex_ir&0x0010){
+		bb |= 0xFFE0;
+	}
+	if( bb>15 ) bb = bb | 0xFFFFFFE0;
+
 	int mem_alu_res=0,
-		shf_res,
-		off6 = boffset6(agex_ir),
+		alu_res=0,
+		shf_res=0,
 		a = agex_sr1,
 		b = sr2mux==SR2_ ? agex_sr2 :
-                           imm5(agex_ir);
-
-
+                           bb;
 
 	switch (aluk) {
-		case ADD_:   mem_alu_res = Low16bits(a+b); break;
-		case AND_:   mem_alu_res = Low16bits(a&b); break;
-		case XOR_:   mem_alu_res = Low16bits(a^b); break;
-		case PASSA_: mem_alu_res = Low16bits(b);   break;
+		case ADD_:   alu_res = Low16bits(a+b); break;
+		case AND_:   alu_res = Low16bits(a&b); break;
+		case XOR_:   alu_res = Low16bits(a^b); break;
+		case PASSA_: alu_res = Low16bits(b);   break;
 	}
 
-	if (bit(off6, 4) == 0)       shf_res = LSHFN(agex_sr1, amount4(agex_ir));
-	else if (bit(off6, 5) == 0)  shf_res = RSHFN(agex_sr1, amount4(agex_ir), 0);
-	else                         shf_res = RSHFN(agex_sr1, amount4(agex_ir), bit(agex_sr1, 15));
+	switch (shfMux(agex_ir))
+	{
+		case 0: shf_res  = LSHFN(agex_sr1, amount4(agex_ir));    break;
+		case 1: shf_res  = RSHFN(agex_sr1, amount4(agex_ir), 0); break;
+		case 3: shf_res  = RSHFN(agex_sr1, amount4(agex_ir), bit(agex_sr1, 15));
+			break;
+		default: break;
+	}
 
 	mem_alu_res = alu_resmux==0 ? shf_res
-	                        : mem_alu_res;
-
+	                            : alu_res;
 
 	addr1_res = (addr1mux==PC_ ? agex_npc : agex_sr1);
 
@@ -1209,17 +1221,21 @@ void AGEX_stage() {
 		case offset6_:    addr2_res = offset6(agex_ir);    break;
 		case PCoffset9_:  addr2_res = PCoffset9(agex_ir);  break;
 		case PCoffset11_: addr2_res = PCoffset11(agex_ir); break;
-		default:          addr2_res = 0;                   break;
+		default:break;
 	}
 
 	addr2_res = (lshf1== YES_ ? LSHF(addr2_res)
 	                          : addr2_res);
+
 	mem_addr_res = (addressmux == B7_0_ ? LSHF(ZEXT8(agex_ir))
 	                                    : addr1_res + addr2_res);
+
+
 
 	int agex_ld_cc    = Get_AGEX_LD_CC(PS.AGEX_CS),
 		agex_ld_reg   = Get_AGEX_LD_REG(PS.AGEX_CS),
 		agex_br_stall = Get_AGEX_BR_STALL(PS.AGEX_CS);
+
 
 	v_agex_br_stall = agex_br_stall & agex_v;
 	v_agex_ld_cc    = agex_ld_cc & agex_v;
@@ -1277,6 +1293,7 @@ void DE_stage() {
 	v_de_br_stall = de_v && de_cs[BR_STALL];
 
 
+	agex_cc = ccfy(N,Z,P);
 
 	if (v_sr_ld_cc==1)
 	{
@@ -1297,7 +1314,6 @@ void DE_stage() {
 	if(v_sr_ld_reg==1)
 		REGS[sr_reg_id] = Low16bits( sr_reg_data );
 
-	agex_cc = ccfy(N,Z,P);
 
 	LD_AGEX = mem_stall==1 ? 0
 	                       : 1;
@@ -1349,7 +1365,6 @@ int dependencyWhere(int *de_cs, int sr1, int sr2) {
 	else return 0;
 }
 
-
 /************************* FETCH_stage() *************************/
 void FETCH_stage() {
 
@@ -1381,6 +1396,7 @@ void FETCH_stage() {
 		NEW_PS.DE_IR  = de_ir;
 		NEW_PS.DE_V   = de_v;
 	}
+
 }
 
 int canLoadPc() {
